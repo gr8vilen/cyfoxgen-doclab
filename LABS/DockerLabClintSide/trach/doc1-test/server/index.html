@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Docker Lab Control Panel</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        body {
+            background: #f0f2f5;
+            padding: 2rem;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+        .connection-form {
+            background: white;
+            padding: 2rem;
+            border-radius: 10px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 2rem;
+        }
+        .form-group {
+            margin-bottom: 1rem;
+        }
+        .form-group label {
+            display: block;
+            margin-bottom: 0.5rem;
+            color: #333;
+        }
+        .form-group input {
+            width: 100%;
+            padding: 0.5rem;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .connect-btn {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 0.75rem 1.5rem;
+            border-radius: 4px;
+            cursor: pointer;
+            width: 100%;
+        }
+        .connect-btn:hover {
+            background: #0056b3;
+        }
+        .docker-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1.5rem;
+            margin-top: 2rem;
+        }
+        .docker-card {
+            background: white;
+            border-radius: 10px;
+            padding: 1.5rem;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .docker-card h3 {
+            margin-bottom: 1rem;
+            color: #333;
+        }
+        .docker-card .status {
+            margin-bottom: 1rem;
+            padding: 0.5rem;
+            border-radius: 4px;
+            text-align: center;
+        }
+        .docker-card .status.running {
+            background: #d4edda;
+            color: #155724;
+        }
+        .docker-card .status.stopped {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        .docker-card .ip {
+            margin-bottom: 1rem;
+            padding: 0.5rem;
+            background: #e9ecef;
+            border-radius: 4px;
+        }
+        .card-actions {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.5rem;
+        }
+        .card-actions button {
+            padding: 0.5rem;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            color: white;
+        }
+        .start-btn {
+            background: #28a745;
+        }
+        .start-btn:hover {
+            background: #218838;
+        }
+        .stop-btn {
+            background: #dc3545;
+        }
+        .stop-btn:hover {
+            background: #c82333;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Docker Lab Control Panel</h1>
+        </div>
+
+        <div class="connection-form">
+            <h2>Connect to Docker API</h2>
+            <div class="form-group">
+                <label for="api-url">API URL:</label>
+                <input type="text" id="api-url" placeholder="Enter API URL">
+            </div>
+            <div class="form-group">
+                <label for="port">Port:</label>
+                <input type="text" id="port" placeholder="Enter Port">
+            </div>
+            <div class="form-group">
+                <label for="password">Password:</label>
+                <input type="password" id="password" placeholder="Enter Password">
+            </div>
+            <button class="connect-btn" onclick="connectToAPI()">Connect</button>
+        </div>
+
+        <div class="docker-grid">
+            <!-- Apache Server Card -->
+            <div class="docker-card">
+                <h3>Apache Server</h3>
+                <div class="status stopped" id="apache-status">Stopped</div>
+                <div class="ip" id="apache-ip">IP: Not Available</div>
+                <div class="card-actions">
+                    <button class="start-btn" onclick="startContainer('apache')">Start</button>
+                    <button class="stop-btn" onclick="stopContainer('apache')">Stop</button>
+                </div>
+            </div>
+
+            <!-- PHP Server Card -->
+            <div class="docker-card">
+                <h3>PHP Server</h3>
+                <div class="status stopped" id="php-status">Stopped</div>
+                <div class="ip" id="php-ip">IP: Not Available</div>
+                <div class="card-actions">
+                    <button class="start-btn" onclick="startContainer('php')">Start</button>
+                    <button class="stop-btn" onclick="stopContainer('php')">Stop</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let apiConfig = {
+            url: '',
+            port: '',
+            password: ''
+        };
+
+        function connectToAPI() {
+            apiConfig.url = document.getElementById('api-url').value;
+            apiConfig.port = document.getElementById('port').value;
+            apiConfig.password = document.getElementById('password').value;
+
+            // Here you would typically validate the connection
+            alert('Connected to Docker API');
+            // After successful connection, you can start polling for container status
+            setInterval(updateContainerStatus, 5000);
+        }
+
+        function startContainer(type) {
+            // Implementation will be added when backend is ready
+            const statusElement = document.getElementById(`${type}-status`);
+            const ipElement = document.getElementById(`${type}-ip`);
+            
+            statusElement.textContent = 'Running';
+            statusElement.className = 'status running';
+            ipElement.textContent = 'IP: 192.168.1.' + Math.floor(Math.random() * 255);
+        }
+
+        function stopContainer(type) {
+            // Implementation will be added when backend is ready
+            const statusElement = document.getElementById(`${type}-status`);
+            const ipElement = document.getElementById(`${type}-ip`);
+            
+            statusElement.textContent = 'Stopped';
+            statusElement.className = 'status stopped';
+            ipElement.textContent = 'IP: Not Available';
+        }
+
+        function updateContainerStatus() {
+            // This function will poll the API for container status
+            // Implementation will be added when backend is ready
+        }
+    </script>
+</body>
+</html>

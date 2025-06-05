@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  docker-lab-manager:
+    build: .
+    container_name: docker-lab-manager
+    privileged: true
+    ports:
+      - "5000:5000"
+    volumes:
+      - docker-data:/var/lib/docker
+    environment:
+      - DOCKER_TLS_CERTDIR=
+    restart: unless-stopped
+    networks:
+      - lab-external
+
+volumes:
+  docker-data:
+
+networks:
+  lab-external:
+    driver: bridge

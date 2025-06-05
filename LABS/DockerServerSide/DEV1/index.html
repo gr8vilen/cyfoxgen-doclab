@@ -1,0 +1,706 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Docker Lab Manager</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <style>
+        :root {
+            --primary-color: #8D6E63;
+            --secondary-color: #6D4C41;
+            --accent-color: #A1887F;
+            --background: linear-gradient(135deg, #F5E6D3 0%, #E8D5B7 50%, #D4C0A1 100%);
+        }
+
+        body {
+            background: var(--background);
+            min-height: 100vh;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        }
+
+        .header {
+            background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+            color: white;
+            border-radius: 20px;
+            box-shadow: 0 10px 30px rgba(61, 39, 35, 0.2);
+        }
+
+        .card {
+            border: none;
+            border-radius: 15px;
+            box-shadow: 0 5px 15px rgba(61, 39, 35, 0.1);
+            background: rgba(255, 248, 225, 0.9);
+            backdrop-filter: blur(10px);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 15px 35px rgba(61, 39, 35, 0.15);
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+            border: none;
+        }
+
+        .btn-primary:hover {
+            background: linear-gradient(135deg, var(--accent-color), var(--primary-color));
+            transform: translateY(-2px);
+        }
+
+        .logs-container {
+            background: #1e1e1e;
+            color: #e8e8e8;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            max-height: 400px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            border-radius: 10px;
+        }
+
+        .status-running {
+            background: linear-gradient(135deg, #4CAF50, #388E3C);
+        }
+
+        .status-stopped {
+            background: linear-gradient(135deg, #F44336, #D32F2F);
+        }
+
+        .copy-feedback {
+            animation: copySuccess 0.8s ease-in-out;
+        }
+
+        @keyframes copySuccess {
+            0% { background-color: #28a745; color: white; }
+            50% { background-color: #28a745; color: white; transform: scale(1.1); }
+            100% { background-color: initial; color: initial; transform: scale(1); }
+        }
+
+        /* Toast Notification Styles */
+        .toast-container {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 9999;
+        }
+
+        .toast {
+            min-width: 300px;
+            backdrop-filter: blur(10px);
+            border: none;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+        }
+
+        .toast.success {
+            background: linear-gradient(135deg, rgba(40, 167, 69, 0.95), rgba(34, 139, 59, 0.95));
+            color: white;
+        }
+
+        .toast.error {
+            background: linear-gradient(135deg, rgba(220, 53, 69, 0.95), rgba(200, 35, 51, 0.95));
+            color: white;
+        }
+
+        .toast.info {
+            background: linear-gradient(135deg, rgba(13, 110, 253, 0.95), rgba(10, 88, 202, 0.95));
+            color: white;
+        }
+
+        .copy-btn {
+            background: transparent;
+            border: 1px solid #dee2e6;
+            color: #6c757d;
+            transition: all 0.3s ease;
+        }
+
+        .copy-btn:hover {
+            background: #f8f9fa;
+            border-color: #adb5bd;
+            color: #495057;
+        }
+
+        .copy-btn.copied {
+            background: #28a745;
+            border-color: #28a745;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <!-- Toast Container -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <div class="container-fluid p-4">
+        <!-- Header with Connection Settings -->
+        <div class="header p-4 mb-4">
+            <div class="row align-items-center">
+                <div class="col-md-4">
+                    <h1 class="h3 mb-0"><i class="fab fa-docker"></i> Container Manager</h1>
+                    <p class="mb-0 opacity-75">Professional Interface</p>
+                </div>
+                <div class="col-md-8">
+                    <div class="row g-2">
+                        <div class="col-md-3">
+                            <label class="form-label text-white-50 small">HOST IP</label>
+                            <input type="text" id="hostInput" class="form-control form-control-sm" 
+                                   value="localhost" placeholder="localhost">
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label text-white-50 small">PORT</label>
+                            <input type="number" id="portInput" class="form-control form-control-sm" 
+                                   value="62111" placeholder="62111">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label text-white-50 small">PASSWORD</label>
+                            <input type="password" id="passwordInput" class="form-control form-control-sm" 
+                                   placeholder="Enter password..." onkeypress="handleKeyPress(event)">
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label text-white-50 small">&nbsp;</label>
+                            <button onclick="authenticate()" class="btn btn-light btn-sm d-block w-100">
+                                <i class="fas fa-plug"></i> Connect
+                            </button>
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label text-white-50 small">&nbsp;</label>
+                            <button onclick="disconnect()" class="btn btn-outline-light btn-sm d-block w-100" id="disconnectBtn" style="display: none !important;">
+                                <i class="fas fa-times"></i> Disconnect
+                            </button>
+                        </div>
+                    </div>
+                    <div id="authError" class="mt-2"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <div class="row" id="mainContent" style="display: none;">
+            <!-- Available Images -->
+            <div class="col-lg-6 mb-4">
+                <div class="card h-100">
+                    <div class="card-header bg-primary text-white">
+                        <h5 class="mb-0"><i class="fas fa-box"></i> Available Images</h5>
+                    </div>
+                    <div class="card-body">
+                        <!-- Search Bar -->
+                        <div class="mb-3">
+                            <input type="text" id="imageSearch" class="form-control" 
+                                   placeholder="Search images..." onkeyup="filterImages()">
+                        </div>
+                        <div id="availableImages">
+                            <div class="text-center p-4">
+                                <div class="spinner-border text-primary" role="status">
+                                    <span class="visually-hidden">Loading...</span>
+                                </div>
+                                <p class="mt-2">Loading available images...</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Active Containers -->
+            <div class="col-lg-6 mb-4">
+                <div class="card h-100">
+                    <div class="card-header bg-success text-white">
+                        <h5 class="mb-0"><i class="fas fa-rocket"></i> Active Containers</h5>
+                    </div>
+                    <div class="card-body">
+                        <div id="activeContainers">
+                            <div class="text-center p-4">
+                                <div class="spinner-border text-success" role="status">
+                                    <span class="visually-hidden">Loading...</span>
+                                </div>
+                                <p class="mt-2">Loading containers...</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Container Details Modal -->
+    <div class="modal fade" id="containerModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header bg-primary text-white">
+                    <h5 class="modal-title" id="modalTitle">Container Details</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body" id="modalContent">
+                    <!-- Content will be populated here -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Configuration
+        let API_BASE = 'http://localhost:62111';
+        let currentPassword = '';
+        let refreshInterval;
+        let isAuthenticated = false;
+
+        // Toast notification system
+        function showToast(message, type = 'info', duration = 5000) {
+            const toastContainer = document.getElementById('toastContainer');
+            const toastId = 'toast-' + Date.now();
+            
+            const toastHtml = `
+                <div class="toast ${type}" role="alert" id="${toastId}" data-bs-autohide="false">
+                    <div class="toast-header">
+                        <i class="fas fa-${type === 'success' ? 'check-circle' : type === 'error' ? 'exclamation-circle' : 'info-circle'} me-2"></i>
+                        <strong class="me-auto">${type === 'success' ? 'Success' : type === 'error' ? 'Error' : 'Info'}</strong>
+                        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="toast"></button>
+                    </div>
+                    <div class="toast-body">
+                        ${message}
+                    </div>
+                </div>
+            `;
+            
+            toastContainer.insertAdjacentHTML('beforeend', toastHtml);
+            
+            const toastElement = document.getElementById(toastId);
+            const toast = new bootstrap.Toast(toastElement);
+            toast.show();
+            
+            // Auto remove after duration
+            setTimeout(() => {
+                if (toastElement && toastElement.parentNode) {
+                    toast.hide();
+                    setTimeout(() => {
+                        if (toastElement && toastElement.parentNode) {
+                            toastElement.remove();
+                        }
+                    }, 300);
+                }
+            }, duration);
+        }
+
+        // Available container images
+        const availableImages = [
+            { name: 'Apache HTTP Server', image: 'httpd:alpine', description: 'Lightweight Apache web server', icon: 'fas fa-globe' },
+            { name: 'Nginx', image: 'nginx:alpine', description: 'High-performance web server', icon: 'fas fa-server' },
+            { name: 'Node.js', image: 'node:alpine', description: 'JavaScript runtime environment', icon: 'fab fa-node-js' },
+            { name: 'Python', image: 'python:alpine', description: 'Python programming environment', icon: 'fab fa-python' },
+            { name: 'MySQL', image: 'mysql:8', description: 'MySQL database server', icon: 'fas fa-database' },
+            { name: 'PostgreSQL', image: 'postgres:alpine', description: 'PostgreSQL database', icon: 'fas fa-database' },
+            { name: 'Redis', image: 'redis:alpine', description: 'In-memory data store', icon: 'fas fa-memory' },
+            { name: 'MongoDB', image: 'mongo:latest', description: 'NoSQL document database', icon: 'fas fa-leaf' }
+        ];
+
+        function updateApiBase() {
+            const host = document.getElementById('hostInput').value.trim() || 'localhost';
+            const port = document.getElementById('portInput').value.trim() || '62111';
+            API_BASE = `http://${host}:${port}`;
+        }
+
+        function handleKeyPress(event) {
+            if (event.key === 'Enter') {
+                authenticate();
+            }
+        }
+
+        async function authenticate() {
+            updateApiBase();
+            const password = document.getElementById('passwordInput').value.trim();
+            
+            if (!password) {
+                showToast('Please enter a password', 'error');
+                return;
+            }
+
+            try {
+                // Test authentication by trying to fetch containers with password
+                const response = await fetch(`${API_BASE}/containers`, {
+                    headers: {
+                        'Authorization': `Bearer ${password}`
+                    }
+                });
+                
+                if (response.ok) {
+                    currentPassword = password;
+                    isAuthenticated = true;
+                    
+                    document.getElementById('mainContent').style.display = 'flex';
+                    document.getElementById('disconnectBtn').style.display = 'block !important';
+                    
+                    // Load initial data
+                    loadActiveContainers();
+                    loadAvailableImages();
+                    
+                    // Start refresh interval
+                    refreshInterval = setInterval(loadActiveContainers, 5000);
+                    
+                    showToast('Connected successfully!', 'success');
+                } else {
+                    throw new Error('Invalid credentials');
+                }
+            } catch (error) {
+                isAuthenticated = false;
+                currentPassword = '';
+                showToast(`Connection failed: ${error.message}`, 'error');
+            }
+        }
+
+        function disconnect() {
+            isAuthenticated = false;
+            currentPassword = '';
+            
+            if (refreshInterval) {
+                clearInterval(refreshInterval);
+                refreshInterval = null;
+            }
+            
+            document.getElementById('mainContent').style.display = 'none';
+            document.getElementById('disconnectBtn').style.display = 'none';
+            document.getElementById('passwordInput').value = '';
+            document.getElementById('authError').innerHTML = '';
+            
+            showToast('Disconnected from server', 'info');
+        }
+
+        function loadAvailableImages() {
+            const container = document.getElementById('availableImages');
+            
+            container.innerHTML = availableImages.map(img => `
+                <div class="card mb-3 image-card" data-name="${img.name.toLowerCase()}" data-image="${img.image.toLowerCase()}">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                <h6 class="card-title"><i class="${img.icon}"></i> ${img.name}</h6>
+                                <p class="card-text text-muted small">${img.description}</p>
+                                <code class="text-secondary">${img.image}</code>
+                            </div>
+                            <button class="btn btn-success btn-sm" onclick="deployContainer('${img.image}')">
+                                <i class="fas fa-play"></i> Deploy
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function filterImages() {
+            const searchTerm = document.getElementById('imageSearch').value.toLowerCase();
+            const imageCards = document.querySelectorAll('.image-card');
+            
+            imageCards.forEach(card => {
+                const name = card.dataset.name;
+                const image = card.dataset.image;
+                
+                if (name.includes(searchTerm) || image.includes(searchTerm)) {
+                    card.style.display = 'block';
+                } else {
+                    card.style.display = 'none';
+                }
+            });
+        }
+
+        async function loadActiveContainers() {
+            if (!isAuthenticated) return;
+            
+            const container = document.getElementById('activeContainers');
+            
+            try {
+                const response = await fetch(`${API_BASE}/containers`, {
+                    headers: {
+                        'Authorization': `Bearer ${currentPassword}`
+                    }
+                });
+                
+                if (!response.ok) {
+                    if (response.status === 401 || response.status === 403) {
+                        // Authentication expired, redirect to login
+                        isAuthenticated = false;
+                        document.getElementById('mainContent').classList.add('d-none');
+                        document.getElementById('authSection').classList.remove('d-none');
+                        showToast('Session expired. Please authenticate again.', 'error');
+                        return;
+                    }
+                    throw new Error('Failed to fetch containers');
+                }
+                
+                const data = await response.json();
+                const containers = data.containers.filter(c => 
+                    c.ip && c.ip.startsWith('172.20.0.') && !c.name.includes('docker-lab-manager')
+                );
+                
+                if (containers.length === 0) {
+                    container.innerHTML = '<div class="text-center p-4 text-muted">No active containers found</div>';
+                    return;
+                }
+                
+                container.innerHTML = containers.map(cont => `
+                    <div class="card mb-3">
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between align-items-start">
+                                <div>
+                                    <h6 class="card-title"><i class="fas fa-box"></i> ${cont.name}</h6>
+                                    <p class="card-text text-muted small">${cont.image}</p>
+                                    <div class="d-flex align-items-center">
+                                        <code class="me-2">${cont.ip}</code>
+                                        <button class="btn copy-btn btn-sm" onclick="copyToClipboard('${cont.ip}', this)" title="Copy IP address">
+                                            <i class="fas fa-copy"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="text-end">
+                                    <span class="badge status-${cont.status} mb-2">${cont.status.toUpperCase()}</span>
+                                    <br>
+                                    ${cont.status === 'running' ? 
+                                        `<button class="btn btn-info btn-sm" onclick="showContainerDetails('${cont.id}')">
+                                            <i class="fas fa-info-circle"></i> Details
+                                        </button>` :
+                                        '<span class="text-danger small">Container Stopped</span>'
+                                    }
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `).join('');
+                
+            } catch (error) {
+                container.innerHTML = `<div class="alert alert-danger">Error loading containers: ${error.message}</div>`;
+            }
+        }
+
+        async function deployContainer(image) {
+            if (!isAuthenticated) {
+                showToast('Please authenticate first', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/deploy`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${currentPassword}`
+                    },
+                    body: JSON.stringify({
+                        image: image,
+                        password: currentPassword
+                    })
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    showToast(`🎉 Container deployed successfully!<br><strong>IP:</strong> ${data.container.ip}<br><strong>Name:</strong> ${data.container.name}`, 'success');
+                    loadActiveContainers();
+                } else {
+                    if (response.status === 401 || response.status === 403) {
+                        showToast('Authentication failed. Please check your password.', 'error');
+                        return;
+                    }
+                    const error = await response.json();
+                    throw new Error(error.error || 'Deployment failed');
+                }
+            } catch (error) {
+                showToast(`❌ Deployment failed: ${error.message}`, 'error');
+            }
+        }
+
+        async function showContainerDetails(containerId) {
+            if (!isAuthenticated) return;
+
+            const modal = new bootstrap.Modal(document.getElementById('containerModal'));
+            const title = document.getElementById('modalTitle');
+            const content = document.getElementById('modalContent');
+            
+            title.textContent = 'Loading...';
+            content.innerHTML = '<div class="text-center p-4"><div class="spinner-border" role="status"></div></div>';
+            
+            modal.show();
+            
+            try {
+                const [containerResponse, logsResponse] = await Promise.all([
+                    fetch(`${API_BASE}/containers/${containerId}`, {
+                        headers: { 'Authorization': `Bearer ${currentPassword}` }
+                    }),
+                    fetch(`${API_BASE}/containers/${containerId}/logs`, {
+                        headers: { 'Authorization': `Bearer ${currentPassword}` }
+                    })
+                ]);
+                
+                if (!containerResponse.ok || !logsResponse.ok) {
+                    throw new Error('Failed to fetch container details');
+                }
+                
+                const containerData = await containerResponse.json();
+                const logsData = await logsResponse.json();
+                const container = containerData.container;
+                
+                title.textContent = container.name;
+                
+                content.innerHTML = `
+                    <div class="row">
+                        <div class="col-md-6">
+                            <h6>Container Information</h6>
+                            <table class="table table-sm">
+                                <tr><td><strong>Name:</strong></td><td>${container.name}</td></tr>
+                                <tr><td><strong>Image:</strong></td><td><code>${container.image}</code></td></tr>
+                                <tr><td><strong>IP Address:</strong></td><td>
+                                    <code>${container.ip}</code>
+                                    <button class="btn copy-btn btn-sm ms-2" onclick="copyToClipboard('${container.ip}', this)" title="Copy IP address">
+                                        <i class="fas fa-copy"></i>
+                                    </button>
+                                </td></tr>
+                                <tr><td><strong>Status:</strong></td><td>
+                                    <span class="badge status-${container.status}">${container.status.toUpperCase()}</span>
+                                </td></tr>
+                            </table>
+                        </div>
+                        <div class="col-md-6">
+                            <h6>Actions</h6>
+                            <button class="btn btn-danger" onclick="stopContainer('${container.id}')">
+                                <i class="fas fa-stop"></i> Stop & Remove
+                            </button>
+                            <button class="btn btn-info ms-2" onclick="refreshLogs('${container.id}')">
+                                <i class="fas fa-sync"></i> Refresh Logs
+                            </button>
+                        </div>
+                    </div>
+                    <hr>
+                    <h6>Container Logs</h6>
+                    <div class="logs-container p-3" id="containerLogs">${logsData.logs || 'No logs available'}</div>
+                `;
+                
+                // Auto-scroll logs to bottom
+                setTimeout(() => {
+                    const logsContainer = document.getElementById('containerLogs');
+                    if (logsContainer) {
+                        logsContainer.scrollTop = logsContainer.scrollHeight;
+                    }
+                }, 100);
+                
+            } catch (error) {
+                content.innerHTML = `<div class="alert alert-danger">Error loading details: ${error.message}</div>`;
+            }
+        }
+
+        async function stopContainer(containerId) {
+            try {
+                const response = await fetch(`${API_BASE}/containers/${containerId}`, {
+                    method: 'DELETE',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${currentPassword}`
+                    },
+                    body: JSON.stringify({
+                        password: currentPassword
+                    })
+                });
+
+                if (response.ok) {
+                    showToast('✅ Container stopped and removed successfully!', 'success');
+                    bootstrap.Modal.getInstance(document.getElementById('containerModal')).hide();
+                    loadActiveContainers();
+                } else {
+                    const error = await response.json();
+                    throw new Error(error.error || 'Failed to stop container');
+                }
+            } catch (error) {
+                showToast(`❌ Failed to stop container: ${error.message}`, 'error');
+            }
+        }
+
+        async function refreshLogs(containerId) {
+            const logsContainer = document.getElementById('containerLogs');
+            logsContainer.innerHTML = '<div class="text-center p-3"><div class="spinner-border spinner-border-sm" role="status"></div> Refreshing logs...</div>';
+            
+            try {
+                const response = await fetch(`${API_BASE}/containers/${containerId}/logs`, {
+                    headers: { 'Authorization': `Bearer ${currentPassword}` }
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    logsContainer.innerHTML = data.logs || 'No logs available';
+                    logsContainer.scrollTop = logsContainer.scrollHeight;
+                } else {
+                    throw new Error('Failed to fetch logs');
+                }
+            } catch (error) {
+                logsContainer.innerHTML = `<div class="alert alert-danger">Error loading logs: ${error.message}</div>`;
+            }
+        }
+
+        // Improved copy function with fallback methods
+        function copyToClipboard(text, button) {
+            // Method 1: Modern Clipboard API
+            if (navigator.clipboard && window.isSecureContext) {
+                navigator.clipboard.writeText(text).then(() => {
+                    showCopySuccess(button);
+                    showToast(`📋 IP address copied: ${text}`, 'success', 2000);
+                }).catch(() => {
+                    // Fallback to older method
+                    fallbackCopyTextToClipboard(text, button);
+                });
+            } else {
+                // Fallback for older browsers or non-secure contexts
+                fallbackCopyTextToClipboard(text, button);
+            }
+        }
+
+        // Fallback copy method for older browsers
+        function fallbackCopyTextToClipboard(text, button) {
+            const textArea = document.createElement("textarea");
+            textArea.value = text;
+            
+            // Avoid scrolling to bottom
+            textArea.style.top = "0";
+            textArea.style.left = "0";
+            textArea.style.position = "fixed";
+            textArea.style.opacity = "0";
+            
+            document.body.appendChild(textArea);
+            textArea.focus();
+            textArea.select();
+            
+            try {
+                const successful = document.execCommand('copy');
+                if (successful) {
+                    showCopySuccess(button);
+                    showToast(`📋 IP address copied: ${text}`, 'success', 2000);
+                } else {
+                    throw new Error('Copy command failed');
+                }
+            } catch (err) {
+                showToast('❌ Failed to copy to clipboard. Please copy manually: ' + text, 'error');
+                console.error('Fallback: Could not copy text: ', err);
+            }
+            
+            document.body.removeChild(textArea);
+        }
+
+        // Show visual feedback for successful copy
+        function showCopySuccess(button) {
+            const originalHTML = button.innerHTML;
+            const originalClasses = button.className;
+            
+            button.innerHTML = '<i class="fas fa-check"></i>';
+            button.className = originalClasses + ' copied';
+            
+            setTimeout(() => {
+                button.innerHTML = originalHTML;
+                button.className = originalClasses;
+            }, 1200);
+        }
+
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', function() {
+            if (refreshInterval) {
+                clearInterval(refreshInterval);
+            }
+        });
+    </script>
+</body>
+</html>

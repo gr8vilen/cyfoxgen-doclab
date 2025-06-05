@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>CyberLab Control Panel</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <h1>🧠 CyberLab - Docker Control Panel</h1>
+
+  <div class="card" id="apache-card">
+    <h2>🖥️ Apache Server</h2>
+    <button onclick="deployContainer('http://192.168.51.131:3000', 'httpd', 'apache-card')">Start</button>
+    <div class="status" id="apache-status">Status: Not running</div>
+  </div>
+
+  <div class="card" id="php-card">
+    <h2>🐘 PHP Server</h2>
+    <button onclick="deployContainer('http://192.168.51.131:3000', 'php:7.4-apache', 'php-card')">Start</button>
+    <div class="status" id="php-status">Status: Not running</div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>

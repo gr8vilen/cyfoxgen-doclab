@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>CyberLab Control</title>
+  <style>
+    body { font-family: sans-serif; text-align: center; margin-top: 40px; }
+    .card { border: 1px solid #ccc; padding: 20px; margin: 20px; display: inline-block; }
+    button { padding: 10px 20px; }
+  </style>
+</head>
+<body>
+  <h1>CyberLab Control Panel</h1>
+  <input id="agentUrl" placeholder="Agent URL (http://192.168.X.X:3000)" style="width: 300px;" />
+  <br><br>
+  <div class="card">
+    <h2>Apache Server</h2>
+    <button onclick="deploy('httpd')">Start</button>
+    <p id="httpd-status"></p>
+  </div>
+  <div class="card">
+    <h2>PHP Server</h2>
+    <button onclick="deploy('php:7.2-apache')">Start</button>
+    <p id="php-status"></p>
+  </div>
+  <script src="script.js"></script>
+</body>
+</html>
