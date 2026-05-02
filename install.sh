@@ -905,7 +905,7 @@ class HACKLABTUI(App):
 
     def action_refresh(self) -> None:
         self._do_refresh()
-        self.notify("Refreshed", severity="information", timeout=1)
+        # self.notify("Refreshed", severity="information", timeout=1)
 
     @work(thread=True)
     def _do_refresh(self) -> None:
@@ -1128,8 +1128,8 @@ class HACKLABTUI(App):
             "  [#1aff6e][L][/]  Toggle system logs panel visibility\n"
             "  [#1aff6e][H][/]  Show this help message\n\n"
             "  [#1aff6e][↑/↓][/] or [#1aff6e][J/K][/] to navigate list\n\n"
-            "  Every action is logged in the bottom panel.\n"
-            "  Deployment is done via the API port 62111."
+            "  [#1aff6e]TIP:[/] If you hear a beep on pop-ups (macOS),\n"
+            "  disable 'Audible bell' in Terminal > Settings > Profiles."
         )
         self.notify(help_msg, title="How to use", timeout=10)
 
