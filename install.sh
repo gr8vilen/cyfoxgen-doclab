@@ -606,6 +606,12 @@ CSS = """
 Screen {
     background: #080f08;
     layers: base overlay;
+    cursor: default;
+}
+
+#top-spacer {
+    height: 2;
+    background: transparent;
 }
 
 /* ── Top header bar ───────────────────────────────────────────────── */
@@ -843,6 +849,7 @@ class HACKLABTUI(App):
 
     # ── Compose ─────────────────────────────────────────────────────────────
     def compose(self) -> ComposeResult:
+        yield Static("", id="top-spacer")
         yield Static(
             f"  uneo HACKLAB  |  KEY: {PASS}  |  PID: {API_PID}",
             id="header-bar"
@@ -1090,23 +1097,19 @@ class HACKLABTUI(App):
             return
         c = self._containers[self._selected_idx]
         if c.get("status") != "running":
-            self.notify(f"{c['name']} is not running.", severity="warning")
+            self._last_activity = f"⚠️ {c['name']} is not running."
             return
-        self.notify(f"Stopping {c.get('name')}…", severity="information")
+        self._last_activity = f"⏳ Stopping {c.get('name')}…"
         self._do_stop(c)
 
     @work(thread=True)
     def _do_stop(self, c: dict) -> None:
         resp = api("DELETE", f"/containers/{c['id']}", {"password": PASS})
         if resp and resp.get("success"):
-            self.call_from_thread(
-                self.notify, f"Stopped: {c.get('name')}", severity="information"
-            )
+            self._last_activity = f"✅ Stopped: {c.get('name')}"
         else:
             err = (resp.get("error", "?") if resp else "no response")
-            self.call_from_thread(
-                self.notify, f"Error: {err}", title="Stop failed", severity="error"
-            )
+            self._last_activity = f"❌ Stop failed: {err}"
         self._do_refresh()
 
     # ── Toggle syslog ────────────────────────────────────────────────────────
@@ -1120,18 +1123,7 @@ class HACKLABTUI(App):
 
     # ── Help ─────────────────────────────────────────────────────────────────
     def action_show_help(self) -> None:
-        help_msg = (
-            "           [bold #1aff6e]HACKLAB TUI HELP[/]\n\n"
-            "  [#1aff6e][Q][/]  Quit the TUI and Stop API server\n"
-            "  [#1aff6e][R][/]  Force refresh container list/logs\n"
-            "  [#1aff6e][S][/]  Stop and remove selected container\n"
-            "  [#1aff6e][L][/]  Toggle system logs panel visibility\n"
-            "  [#1aff6e][H][/]  Show this help message\n\n"
-            "  [#1aff6e][↑/↓][/] or [#1aff6e][J/K][/] to navigate list\n\n"
-            "  [#1aff6e]TIP:[/] If you hear a beep on pop-ups (macOS),\n"
-            "  disable 'Audible bell' in Terminal > Settings > Profiles."
-        )
-        self.notify(help_msg, title="How to use", timeout=10)
+        self._last_activity = "Help: Q=Quit R=Refresh S=Stop L=Logs H=Help ↑/↓=Nav"
 
     # ── Quit ─────────────────────────────────────────────────────────────────
     def action_quit(self) -> None:
