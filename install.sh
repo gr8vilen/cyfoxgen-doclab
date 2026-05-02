@@ -51,7 +51,13 @@ OS=""
 DISTRO=""
 PKG_MGR=""
 
-if [[ "$OSTYPE" == "darwin"* ]]; then
+if [[ -n "${PREFIX:-}" && "${PREFIX:-}" == *"/com.termux/"* ]]; then
+    OS="termux"
+    log_err "Android (Termux) detected. Docker Engine cannot run natively on Android without root and custom kernels."
+    log_warn "If you are trying to connect to a remote Docker host, you need to set DOCKER_HOST manually."
+    log_warn "This installer is currently for Linux, macOS, and Windows WSL."
+    exit 1
+elif [[ "$OSTYPE" == "darwin"* ]]; then
     OS="macos"
     log_ok "macOS detected"
 elif grep -qEi "microsoft|wsl" /proc/version 2>/dev/null; then
@@ -68,7 +74,9 @@ else
 fi
 
 # Determine package manager
-if [[ "$OS" == "macos" ]]; then
+if [[ "$OS" == "termux" ]]; then
+    PKG_MGR="pkg"
+elif [[ "$OS" == "macos" ]]; then
     PKG_MGR="brew"
 elif command -v apt-get &>/dev/null; then
     PKG_MGR="apt"
