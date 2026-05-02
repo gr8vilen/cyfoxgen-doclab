@@ -38,7 +38,7 @@ cat << 'EOF'
 | | ||| |\ |||  \  | / \|
 | \_/|| | \|||  /_ | \_/|
 \____/\_/  \|\____\\____/
-HACKLAB DOC v3
+HACKLAB DOC v5
 EOF
 echo -e "${N}"
 separator
@@ -845,11 +845,10 @@ class HACKLABTUI(App):
     _syslog_visible: bool = True
     _tick:          int   = 0
     _last_activity: str   = "Ready"
-    ENABLE_BELL:    bool  = False
 
     # ── Compose ─────────────────────────────────────────────────────────────
     def compose(self) -> ComposeResult:
-        yield Static("", id="top-spacer")
+        yield Static("\n", id="top-spacer")
         yield Static(
             f"  uneo HACKLAB  |  KEY: {PASS}  |  PID: {API_PID}",
             id="header-bar"
@@ -918,9 +917,9 @@ class HACKLABTUI(App):
         """Thread-safe activity update."""
         self._last_activity = msg
 
-    def on_key(self, event) -> None:
-        """Suppress terminal bell for any unhandled key."""
-        event.stop()
+    def bell(self) -> None:
+        """Override to silence the terminal bell / knock sound on macOS."""
+        pass  # Do nothing — no \a escape, no sound
 
     @work(thread=True)
     def _do_refresh(self) -> None:
