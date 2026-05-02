@@ -440,19 +440,6 @@ echo ""
 # ───────────────────────────── START APP ────────────────────
 log_step "Starting Docker Lab Manager..."
 
-# ── Kill leftover containers from previous session ──────────
-log_step "Removing containers from previous session..."
-OLD_CONTAINERS=$($DOCKER_CMD ps -a --filter "network=lab-network" \
-    --format "{{.Names}}" 2>/dev/null | grep -v "^$" || true)
-if [[ -n "$OLD_CONTAINERS" ]]; then
-    echo "$OLD_CONTAINERS" | while read -r cname; do
-        $DOCKER_CMD rm -f "$cname" >/dev/null 2>&1 && log_ok "Removed: $cname" || true
-    done
-else
-    log_info "No old containers found"
-fi
-echo ""
-
 pkill -f "app.py" 2>/dev/null || true
 sleep 1
 
@@ -556,6 +543,8 @@ Screen {
     padding: 0 2;
     color: #1aff6e;
     text-style: bold;
+    layer: overlay;
+    dock: top;
 }
 
 /* ── Stats strip ──────────────────────────────────────────────────── */
@@ -566,6 +555,8 @@ Screen {
     content-align: left middle;
     padding: 0 2;
     color: #2d9e2d;
+    layer: overlay;
+    dock: top;
 }
 
 /* ── Main body split ──────────────────────────────────────────────── */
@@ -780,10 +771,7 @@ class DocLabTUI(App):
 
     # ── Compose ─────────────────────────────────────────────────────────────
     def compose(self) -> ComposeResult:
-        yield Static(
-            f"  CYFOXGEN DOCLAB  |  KEY: {PASS}  |  PID: {API_PID}",
-            id="header-bar"
-        )
+        yield Static("", id="header-bar")
         yield Static("", id="stats-bar")
         with Horizontal(id="body"):
             # Left: container list
