@@ -221,10 +221,10 @@ cat > "$APP_DIR/app.py" << 'PYEOF'
 #!/usr/bin/env python3
 """
 cyfoxgen-doclab — Docker Lab Manager
-API + Web Dashboard
+Pure REST API (no web UI — CLI dashboard only)
 """
 
-from flask import Flask, request, jsonify, render_template_string
+from flask import Flask, request, jsonify
 from flask_cors import CORS
 import docker
 import ipaddress
@@ -293,114 +293,9 @@ class NetworkManager:
     def release(self, ip):
         self.used.discard(ip)
 
-DASHBOARD = '''<!DOCTYPE html>
-<html lang="en"><head><meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>🐳 cyfoxgen DocLab</title>
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{background:#0a0a0a;color:#00ff00;font-family:"Courier New",monospace;min-height:100vh}
-canvas{position:fixed;top:0;left:0;width:100%;height:100%;z-index:-1;opacity:.08}
-.hdr{background:#000;border-bottom:2px solid #00ff00;padding:18px 24px;
-     box-shadow:0 4px 20px rgba(0,255,0,.25);display:flex;align-items:center;gap:20px}
-.hdr h1{font-size:1.6em;text-shadow:0 0 8px #00ff00;flex:1}
-.pill{background:rgba(0,40,0,.8);border:1px solid #00ff00;border-radius:6px;
-      padding:6px 14px;font-size:.85em}
-.pill span{color:#ffff00;font-weight:bold}
-.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:16px;
-      height:calc(100vh - 90px)}
-.panel{background:rgba(0,15,0,.9);border:1px solid #00ff00;border-radius:10px;
-       padding:16px;display:flex;flex-direction:column;overflow:hidden}
-.panel h2{color:#00ff00;margin-bottom:10px;padding-bottom:8px;
-          border-bottom:1px solid #1a3a1a;font-size:1em;flex-shrink:0}
-.scroll{flex:1;overflow-y:auto;background:#000;border:1px solid #1a1a1a;
-        border-radius:4px;padding:8px;font-size:12px;line-height:1.6}
-.scroll::-webkit-scrollbar{width:6px}
-.scroll::-webkit-scrollbar-thumb{background:#00ff00;border-radius:3px}
-.log-info{color:#00cc00}.log-warning{color:#ffff00}
-.log-error{color:#ff4444}.log-deployment{color:#00ffff}
-.card{background:linear-gradient(135deg,#001100,#002200);border:1px solid #00ff00;
-      border-radius:8px;padding:12px;margin-bottom:10px;flex-shrink:0}
-.card-name{color:#00ffff;font-weight:bold;font-size:.95em}
-.card-ip{color:#ffff00;font-size:.85em;margin:2px 0}
-.card-img{color:#666;font-size:.8em}
-.badge{display:inline-block;padding:2px 8px;border-radius:3px;
-       font-size:.7em;font-weight:bold;float:right}
-.badge-running{background:#00ff00;color:#000}
-.badge-exited{background:#ff4444;color:#fff}
-.card-logs{background:#000;border:1px solid #1a1a1a;border-radius:3px;
-           padding:6px;margin-top:8px;font-size:11px;max-height:100px;overflow-y:auto;
-           line-height:1.4;color:#888}
-.empty{color:#444;text-align:center;margin-top:40px;font-size:.9em}
-</style></head>
-<body>
-<canvas id="mx"></canvas>
-<div class="hdr">
-  <h1>🐳 cyfoxgen DocLab</h1>
-  <div class="pill">Port <span>62111</span></div>
-  <div class="pill">Password <span>{{ password }}</span></div>
-</div>
-<div class="grid">
-  <div class="panel">
-    <h2>📋 System Logs</h2>
-    <div class="scroll" id="syslog"></div>
-  </div>
-  <div class="panel">
-    <h2>🚀 Containers <span id="cnt" style="color:#666;font-weight:normal"></span></h2>
-    <div class="scroll" id="clist"></div>
-  </div>
-</div>
-<script>
-const mx=document.getElementById('mx'),ctx=mx.getContext('2d');
-mx.width=innerWidth;mx.height=innerHeight;
-const cols=mx.width/10,drops=Array(Math.floor(cols)).fill(1);
-const chars='ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@#$%^&*';
-setInterval(()=>{
-  ctx.fillStyle='rgba(0,0,0,.05)';ctx.fillRect(0,0,mx.width,mx.height);
-  ctx.fillStyle='#00ff00';ctx.font='10px monospace';
-  drops.forEach((y,i)=>{
-    ctx.fillText(chars[Math.random()*chars.length|0],i*10,y*10);
-    if(y*10>mx.height&&Math.random()>.975)drops[i]=0;
-    drops[i]++;
-  });
-},40);
-
-async function loadLogs(){
-  const r=await fetch('/system-logs');const d=await r.json();
-  const el=document.getElementById('syslog');
-  el.innerHTML=d.logs.map(l=>`<div class="log-${l.type}">[${l.timestamp}] ${l.message}</div>`).join('');
-  el.scrollTop=el.scrollHeight;
-}
-async function loadContainers(){
-  const r=await fetch('/containers');const d=await r.json();
-  const el=document.getElementById('clist');
-  const list=d.containers.filter(c=>!c.name.includes('docker-lab'));
-  document.getElementById('cnt').textContent=`(${list.length})`;
-  if(!list.length){el.innerHTML='<div class="empty">No containers deployed yet</div>';return;}
-  el.innerHTML='';
-  for(const c of list){
-    const div=document.createElement('div');div.className='card';
-    div.innerHTML=`
-      <span class="badge badge-${c.status}">${c.status.toUpperCase()}</span>
-      <div class="card-name">📦 ${c.name}</div>
-      <div class="card-ip">🌐 ${c.ip}</div>
-      <div class="card-img">${c.image}</div>
-      <div class="card-logs" id="cl-${c.id}">loading...</div>`;
-    el.appendChild(div);
-    fetch(`/containers/${c.id}/logs`).then(r=>r.json()).then(d=>{
-      const lg=document.getElementById('cl-'+c.id);
-      if(lg)lg.innerHTML=d.logs?d.logs.split('\\n').filter(Boolean).slice(-15).join('<br>'):'<em>no logs yet</em>';
-    }).catch(()=>{});
-  }
-}
-loadLogs();loadContainers();
-setInterval(loadLogs,2000);
-setInterval(loadContainers,3000);
-</script></body></html>'''
-
 @app.route('/')
-def dashboard():
-    return render_template_string(DASHBOARD, password=API_PASSWORD)
+def index():
+    return jsonify({"service": "cyfoxgen-doclab", "status": "ok", "hint": "Use the CLI dashboard"})
 
 @app.route('/system-logs')
 def get_logs():
@@ -559,7 +454,7 @@ $DOCKER_CMD network create lab-network 2>/dev/null || true
 
 if [[ "$DOCKER_CMD" == "sudo docker" ]]; then
     if command -v sg &>/dev/null; then
-        sg docker -c "nohup python3 \"$APP_DIR/app.py\" > \"$LOG_FILE\" 2>&1 &"
+        nohup sg docker -c "python3 \"$APP_DIR/app.py\"" > "$LOG_FILE" 2>&1 &
     else
         sudo chmod 666 /var/run/docker.sock 2>/dev/null || true
         nohup python3 "$APP_DIR/app.py" > "$LOG_FILE" 2>&1 &
@@ -570,314 +465,318 @@ fi
 APP_PID=$!
 echo "$APP_PID" > "$APP_DIR/app.pid"
 
-# Wait for it to be ready
+
+# ── Wait for server to be ready ─────────────────────────────
 echo -ne "  ${D}Waiting for server"
 for i in {1..20}; do
     sleep 0.5
-    if curl -sf http://localhost:62111/health >/dev/null 2>&1; then
-        break
-    fi
+    if curl -sf http://localhost:62111/health >/dev/null 2>&1; then break; fi
     echo -ne "."
 done
 echo -e "${N}"
 
 if ! curl -sf http://localhost:62111/health >/dev/null 2>&1; then
     log_err "Server failed to start. Check $LOG_FILE"
-    cat "$LOG_FILE" | tail -20
+    tail -20 "$LOG_FILE"
     exit 1
 fi
 
-# Grab the password
-LAB_PASSWORD=$(curl -sf http://localhost:62111/health | python3 -c "import sys,json; print(json.load(sys.stdin)['password'])" 2>/dev/null || echo "see server log")
+LAB_PASSWORD=$(curl -sf http://localhost:62111/health | \
+    python3 -c "import sys,json; print(json.load(sys.stdin)['password'])" 2>/dev/null || echo "see server log")
 
 log_ok "Server running (PID $APP_PID)"
 echo ""
 
 # ───────────────────────────── TERMINAL UI ──────────────────
-# From here we enter the interactive terminal dashboard.
-# Pure bash: no ncurses, no python-curses — just ANSI + read.
+# htop-style: alternate screen buffer, cursor-home in-place
+# redraws (zero flicker), single-char keypresses (no Enter).
 
 API="http://localhost:62111"
 PASS="$LAB_PASSWORD"
 
-# ── draw_header ──────────────────────────────────────────────
-draw_header() {
-    echo -e "${G}${BOLD}"
-    echo "  ╔══════════════════════════════════════════════════════╗"
-    echo "  ║         🐳  cyfoxgen Docker Lab Manager              ║"
-    echo "  ╚══════════════════════════════════════════════════════╝"
-    echo -e "${N}"
-    echo -e "  ${C}URL     ${W}http://localhost:62111${N}"
-    echo -e "  ${C}Password${W}  $PASS${N}"
-    separator
+# ── primitive helpers ─────────────────────────────────────────
+thin_sep() {
+    local cols; cols=$(tput cols 2>/dev/null || echo 100)
+    printf "${D}"; printf '┄%.0s' $(seq 1 "$cols"); printf "${N}\n"
 }
 
-# ── fetch_status ─────────────────────────────────────────────
-fetch_status() {
-    local json
-    json=$(curl -sf "$API/containers" 2>/dev/null) || { echo -e "${R}  ✘ Cannot reach server${N}"; return; }
-    local count
-    count=$(echo "$json" | python3 -c "import sys,json; cs=json.load(sys.stdin)['containers']; print(len([c for c in cs if 'lab-manager' not in c.get('name','')]))" 2>/dev/null || echo "?")
-    echo -e "  ${G}Active containers: ${W}$count${N}"
-    echo ""
-    echo "$json" | python3 - << 'PYPARSE'
+# ── draw_logo ─────────────────────────────────────────────────
+draw_logo() {
+    printf "${G}${BOLD}"
+    printf "   ██████╗ ██████╗  ██████╗██╗  ██╗██╗      █████╗ ██████╗\n"
+    printf "   ██╔══██╗██╔═══██╗██╔════╝██║ ██╔╝██║     ██╔══██╗██╔══██╗\n"
+    printf "   ██║  ██║██║   ██║██║     █████╔╝ ██║     ███████║██████╔╝\n"
+    printf "   ██║  ██║██║   ██║██║     ██╔═██╗ ██║     ██╔══██║██╔══██╗\n"
+    printf "   ██████╔╝╚██████╔╝╚██████╗██║  ██╗███████╗██║  ██║██████╔╝\n"
+    printf "   ╚═════╝  ╚═════╝  ╚═════╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═════╝\n"
+    printf "${C}            D O C K E R   L A B   M A N A G E R   v2.0${N}\n\n"
+}
+
+# ── status bar ────────────────────────────────────────────────
+draw_statusbar() {
+    local now; now=$(date '+%H:%M:%S')
+    thin_sep
+    printf "  ${G}PID:${W}%s${N}   ${Y}KEY:${W}%s${N}   ${C}%s${N}   ${D}API: %s${N}\n" \
+        "$APP_PID" "$PASS" "$now" "$API"
+    thin_sep
+}
+
+# ── containers pane ───────────────────────────────────────────
+render_containers() {
+    local json="$1"
+    printf "\n  ${G}${BOLD}● CONTAINERS${N}\n"
+    printf '%s' "$json" | python3 -c "
 import sys, json
-data = json.load(sys.stdin)
-containers = [c for c in data['containers'] if 'lab-manager' not in c.get('name','')]
-if not containers:
-    print("  \033[2m  (no containers deployed yet)\033[0m")
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    print('  \033[31m✘ Cannot parse response\033[0m'); sys.exit(0)
+cs = [c for c in data.get('containers',[]) if 'lab-manager' not in c.get('name','')]
+if not cs:
+    print('  \033[2m  — no containers deployed yet —\033[0m')
 else:
-    for c in containers:
-        status_col = '\033[0;32m' if c['status'] == 'running' else '\033[0;31m'
-        reset = '\033[0m'
-        bold = '\033[1m'
-        cyan = '\033[0;36m'
-        yellow = '\033[0;33m'
-        dim = '\033[2m'
-        print(f"  {bold}┌─ {cyan}{c['name']}{reset}  {status_col}[{c['status'].upper()}]{reset}")
-        print(f"  {bold}│{reset}  IP     {yellow}{c['ip']}{reset}")
-        print(f"  {bold}│{reset}  Image  {dim}{c['image']}{reset}")
-        print(f"  {bold}└──────────────────────────────────{reset}")
+    G='\033[0;32m'; R='\033[0;31m'; C='\033[0;36m'; Y='\033[0;33m'
+    W='\033[1;37m'; D='\033[2m'; N='\033[0m'; B='\033[1m'
+    for c in cs:
+        sc = G if c.get('status')=='running' else R
+        badge = (f'{sc}▶ RUNNING{N}' if c.get('status')=='running'
+                 else f'{R}■ {c.get(\"status\",\"?\").upper()}{N}')
+        print(f'  {B}╭─ {C}{c.get(\"name\",\"?\")}{N}  {badge}')
+        print(f'  {B}│{N}  {D}IP   {N} {Y}{c.get(\"ip\",\"?\")}{N}')
+        print(f'  {B}│{N}  {D}Image{N} {D}{c.get(\"image\",\"?\")}{N}')
+        print(f'  {B}╰────────────────────────────{N}')
         print()
-PYPARSE
+" 2>/dev/null
 }
 
-# ── fetch_logs ───────────────────────────────────────────────
-fetch_logs() {
+# ── logs pane ─────────────────────────────────────────────────
+render_logs() {
     local n="${1:-10}"
-    curl -sf "$API/system-logs" 2>/dev/null | python3 - "$n" << 'PYPARSE'
+    printf "  ${C}${BOLD}◉ SYSTEM LOGS${D}  (last %s)${N}\n" "$n"
+    curl -sf "$API/system-logs" 2>/dev/null | python3 -c "
 import sys, json
-n = int(sys.argv[1]) if len(sys.argv) > 1 else 10
-data = json.load(sys.stdin)
-logs = data.get('logs', [])[-int(n):]
-colors = {'info':'\033[0;32m','warning':'\033[0;33m','error':'\033[0;31m','deployment':'\033[0;36m'}
-reset = '\033[0m'
-dim   = '\033[2m'
+n = int(sys.argv[1]) if len(sys.argv)>1 else 10
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    print('  \033[31m✘ Cannot parse logs\033[0m'); sys.exit(0)
+logs = data.get('logs',[])[-n:]
+cols = {'info':'\033[0;32m','warning':'\033[0;33m',
+        'error':'\033[0;31m','deployment':'\033[0;36m'}
+D='\033[2m'; N='\033[0m'
 for l in logs:
-    col = colors.get(l.get('type','info'), colors['info'])
-    print(f"  {dim}[{l['timestamp']}]{reset} {col}{l['message']}{reset}")
-PYPARSE
+    col = cols.get(l.get('type','info'), cols['info'])
+    print(f'  {D}[{l[\"timestamp\"]}]{N} {col}{l[\"message\"]}{N}')
+" "arg0" "$n" 2>/dev/null
 }
 
-# ── cmd: deploy ──────────────────────────────────────────────
+# ── atomic in-place repaint (htop-style, zero flicker) ───────
+render_screen() {
+    local json="$1" msg="${2:-}"
+    # Move cursor to top-left of the alternate screen buffer
+    printf '\033[H'
+    draw_logo
+    draw_statusbar
+    render_containers "$json"
+    thin_sep
+    render_logs 8
+    thin_sep
+    printf "\n"
+    if [[ -n "$msg" ]]; then
+        printf "  ${Y}${BOLD}%s${N}\n\n" "$msg"
+    fi
+    printf "  ${G}[d]${N}eploy   ${R}[s]${N}top   ${C}[l]${N}ogs   ${W}[q]${N}uit   ${D}(auto-refresh 3s — single key, no Enter)${N}\n"
+    # Erase anything below the current line (clean old content)
+    printf '\033[J'
+}
+
+# ── modal: deploy ─────────────────────────────────────────────
 cmd_deploy() {
-    echo ""
-    echo -e "  ${C}Docker image to deploy (e.g. nginx, ubuntu, alpine):${N}"
-    echo -ne "  ${W}> ${N}"
-    read -r IMAGE
-    [[ -z "$IMAGE" ]] && { log_warn "No image entered"; return; }
-
-    echo -e "  ${C}Container name (leave blank for auto):${N}"
-    echo -ne "  ${W}> ${N}"
-    read -r CNAME
-
-    local PAYLOAD
-    if [[ -n "$CNAME" ]]; then
-        PAYLOAD="{\"password\":\"$PASS\",\"image\":\"$IMAGE\",\"name\":\"$CNAME\"}"
+    tput rmcup 2>/dev/null    # leave alt screen → show normal terminal
+    tput cnorm 2>/dev/null
+    printf '\033[2J\033[H'
+    printf "\n  ${G}${BOLD}╔══  🚀  DEPLOY NEW CONTAINER  ══╗${N}\n\n"
+    printf "  ${C}Image${N}  (e.g. nginx  ubuntu  alpine  kalilinux/kali-rolling)\n"
+    printf "  ${W}▸ image  : ${N}"; read -r IMAGE
+    if [[ -z "$IMAGE" ]]; then
+        log_warn "Cancelled."; sleep 1
     else
-        PAYLOAD="{\"password\":\"$PASS\",\"image\":\"$IMAGE\"}"
+        printf "  ${W}▸ name   : ${D}(blank=auto) ${N}";    read -r CNAME
+        printf "  ${W}▸ command: ${D}(blank=default) ${N}"; read -r DCMD
+        printf "\n"
+        local PAYLOAD
+        if [[ -n "$CNAME" && -n "$DCMD" ]]; then
+            PAYLOAD="{\"password\":\"$PASS\",\"image\":\"$IMAGE\",\"name\":\"$CNAME\",\"command\":\"$DCMD\"}"
+        elif [[ -n "$CNAME" ]]; then
+            PAYLOAD="{\"password\":\"$PASS\",\"image\":\"$IMAGE\",\"name\":\"$CNAME\"}"
+        else
+            PAYLOAD="{\"password\":\"$PASS\",\"image\":\"$IMAGE\"}"
+        fi
+        printf "  ${D}⠿ Pulling & deploying...${N}\n"
+        local RESP
+        RESP=$(curl -sf -X POST "$API/deploy" \
+            -H "Content-Type: application/json" -d "$PAYLOAD" 2>&1)
+        if echo "$RESP" | python3 -c \
+            "import sys,json; d=json.load(sys.stdin); exit(0 if d.get('success') else 1)" 2>/dev/null
+        then
+            local IP NM
+            IP=$(echo "$RESP" | python3 -c \
+                "import sys,json; print(json.load(sys.stdin)['container']['ip'])"   2>/dev/null)
+            NM=$(echo "$RESP" | python3 -c \
+                "import sys,json; print(json.load(sys.stdin)['container']['name'])" 2>/dev/null)
+            log_ok "Deployed: ${W}$NM${N}  →  ${Y}$IP${N}"
+        else
+            local ERR
+            ERR=$(echo "$RESP" | python3 -c \
+                "import sys,json; print(json.load(sys.stdin).get('error','?'))" 2>/dev/null \
+                || echo "$RESP")
+            log_err "Deploy failed: $ERR"
+        fi
+        sleep 1
     fi
-
-    echo ""
-    echo -e "  ${D}Sending deploy request...${N}"
-    local RESP
-    RESP=$(curl -sf -X POST "$API/deploy" \
-        -H "Content-Type: application/json" \
-        -d "$PAYLOAD" 2>&1)
-
-    if echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print('ok') if d.get('success') else print('fail')" 2>/dev/null | grep -q ok; then
-        local IP NAME
-        IP=$(echo "$RESP"   | python3 -c "import sys,json; print(json.load(sys.stdin)['container']['ip'])"   2>/dev/null)
-        NAME=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['container']['name'])" 2>/dev/null)
-        log_ok "Deployed: $NAME  →  $IP"
-    else
-        local ERR
-        ERR=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('error','unknown'))" 2>/dev/null || echo "$RESP")
-        log_err "Deploy failed: $ERR"
-    fi
+    tput smcup 2>/dev/null    # back to alt screen
+    tput civis 2>/dev/null
 }
 
-# ── cmd: stop ────────────────────────────────────────────────
+# ── modal: stop ───────────────────────────────────────────────
 cmd_stop() {
-    local LIST
-    LIST=$(curl -sf "$API/containers" 2>/dev/null | python3 -c "
-import sys, json
-cs = json.load(sys.stdin)['containers']
-cs = [c for c in cs if 'lab-manager' not in c.get('name','')]
-for i,c in enumerate(cs, 1):
-    print(f\"  [{i}] {c['name']}  ({c['ip']})\")
+    tput rmcup 2>/dev/null; tput cnorm 2>/dev/null
+    printf '\033[2J\033[H'
+    printf "\n  ${R}${BOLD}╔══  🗑  STOP / REMOVE CONTAINER  ══╗${N}\n\n"
+    local JSON LIST
+    JSON=$(curl -sf "$API/containers" 2>/dev/null || echo '{"containers":[]}')
+    LIST=$(printf '%s' "$JSON" | python3 -c "
+import sys,json
+cs=json.load(sys.stdin).get('containers',[])
+cs=[c for c in cs if 'lab-manager' not in c.get('name','')]
+[print(f'  [{i+1}] \033[0;36m{c[\"name\"]}\033[0m  \033[2m({c[\"ip\"]})\033[0m')
+ for i,c in enumerate(cs)]
 " 2>/dev/null)
-
     if [[ -z "$LIST" ]]; then
-        log_warn "No containers running"
-        return
-    fi
-
-    echo ""
-    echo -e "${C}  Running containers:${N}"
-    echo "$LIST"
-    echo ""
-    echo -e "  ${C}Enter number to stop (or 'all' for cleanup):${N}"
-    echo -ne "  ${W}> ${N}"
-    read -r CHOICE
-
-    if [[ "$CHOICE" == "all" ]]; then
-        curl -sf -X POST "$API/cleanup" \
-            -H "Content-Type: application/json" \
-            -d "{\"password\":\"$PASS\"}" >/dev/null
-        log_ok "All containers removed"
-        return
-    fi
-
-    local CIDS
-    CIDS=$(curl -sf "$API/containers" 2>/dev/null | python3 - "$CHOICE" << 'PYPARSE'
-import sys, json
-idx = int(sys.argv[1]) - 1
-cs = json.load(sys.stdin)['containers']
-cs = [c for c in cs if 'lab-manager' not in c.get('name','')]
-if 0 <= idx < len(cs):
-    print(cs[idx]['id'])
-PYPARSE
-)
-
-    if [[ -z "$CIDS" ]]; then
-        log_err "Invalid selection"
-        return
-    fi
-
-    curl -sf -X DELETE "$API/containers/$CIDS" \
-        -H "Content-Type: application/json" \
-        -d "{\"password\":\"$PASS\"}" >/dev/null
-    log_ok "Container stopped"
-}
-
-# ── cmd: logs ────────────────────────────────────────────────
-cmd_logs() {
-    echo ""
-    echo -e "  ${C}How many log lines? (default 20):${N}"
-    echo -ne "  ${W}> ${N}"
-    read -r N
-    N="${N:-20}"
-    echo ""
-    fetch_logs "$N"
-}
-
-# ── cmd: open browser ────────────────────────────────────────
-cmd_open() {
-    local URL="http://localhost:62111"
-    if command -v xdg-open &>/dev/null; then
-        xdg-open "$URL" 2>/dev/null &
-    elif command -v open &>/dev/null; then
-        open "$URL" 2>/dev/null &
+        log_warn "No containers running."; sleep 2
     else
-        echo -e "  ${Y}Cannot auto-open browser. Visit: ${W}$URL${N}"
-        return
+        printf '%s\n\n' "$LIST"
+        printf "  ${C}Number to remove  or  ${W}all${C}:${N}\n"
+        printf "  ${W}▸ ${N}"; read -r CHOICE
+        if [[ "$CHOICE" == "all" ]]; then
+            curl -sf -X POST "$API/cleanup" -H "Content-Type: application/json" \
+                -d "{\"password\":\"$PASS\"}" >/dev/null
+            log_ok "All containers removed."
+        else
+            local CID
+            CID=$(printf '%s' "$JSON" | python3 -c "
+import sys,json
+try:
+    cs=json.load(sys.stdin).get('containers',[])
+    cs=[c for c in cs if 'lab-manager' not in c.get('name','')]
+    print(cs[int(sys.argv[1])-1]['id'])
+except: pass
+" "arg0" "$CHOICE" 2>/dev/null)
+            if [[ -z "$CID" ]]; then log_err "Invalid selection."; else
+                curl -sf -X DELETE "$API/containers/$CID" \
+                    -H "Content-Type: application/json" -d "{\"password\":\"$PASS\"}" >/dev/null
+                log_ok "Container removed."
+            fi
+        fi
+        sleep 1
     fi
-    log_ok "Opened $URL in browser"
+    tput smcup 2>/dev/null; tput civis 2>/dev/null
 }
 
-# ── cmd: container logs ──────────────────────────────────────
+# ── modal: container logs ─────────────────────────────────────
 cmd_container_logs() {
-    local LIST
-    LIST=$(curl -sf "$API/containers" 2>/dev/null | python3 -c "
-import sys, json
-cs = json.load(sys.stdin)['containers']
-cs = [c for c in cs if 'lab-manager' not in c.get('name','')]
-for i,c in enumerate(cs, 1):
-    print(f\"  [{i}] {c['name']}  ({c['ip']})\")
+    tput rmcup 2>/dev/null; tput cnorm 2>/dev/null
+    printf '\033[2J\033[H'
+    printf "\n  ${C}${BOLD}╔══  📜  CONTAINER LOGS  ══╗${N}\n\n"
+    local JSON LIST
+    JSON=$(curl -sf "$API/containers" 2>/dev/null || echo '{"containers":[]}')
+    LIST=$(printf '%s' "$JSON" | python3 -c "
+import sys,json
+cs=json.load(sys.stdin).get('containers',[])
+cs=[c for c in cs if 'lab-manager' not in c.get('name','')]
+[print(f'  [{i+1}] \033[0;36m{c[\"name\"]}\033[0m') for i,c in enumerate(cs)]
 " 2>/dev/null)
-
     if [[ -z "$LIST" ]]; then
-        log_warn "No containers running"
-        return
+        log_warn "No containers running."; sleep 2
+    else
+        printf '%s\n\n' "$LIST"
+        printf "  ${W}▸ select: ${N}"; read -r CHOICE
+        local CID
+        CID=$(printf '%s' "$JSON" | python3 -c "
+import sys,json
+try:
+    cs=json.load(sys.stdin).get('containers',[])
+    cs=[c for c in cs if 'lab-manager' not in c.get('name','')]
+    print(cs[int(sys.argv[1])-1]['id'])
+except: pass
+" "arg0" "$CHOICE" 2>/dev/null)
+        if [[ -z "$CID" ]]; then log_err "Invalid."; sleep 1; else
+            printf "\n"; thin_sep
+            curl -sf "$API/containers/$CID/logs" 2>/dev/null | python3 -c "
+import sys,json
+try:
+    logs=json.load(sys.stdin).get('logs','')
+except: logs='Error reading logs'
+for l in logs.splitlines()[-60:]:
+    print(f'  \033[2m{l}\033[0m')
+" 2>/dev/null
+            thin_sep; printf "\n"
+            read -rp "  Press Enter to return..."
+        fi
     fi
-
-    echo ""
-    echo -e "${C}  Select container:${N}"
-    echo "$LIST"
-    echo -ne "  ${W}> ${N}"
-    read -r CHOICE
-
-    local CID
-    CID=$(curl -sf "$API/containers" 2>/dev/null | python3 - "$CHOICE" << 'PYPARSE'
-import sys, json
-idx = int(sys.argv[1]) - 1
-cs = json.load(sys.stdin)['containers']
-cs = [c for c in cs if 'lab-manager' not in c.get('name','')]
-if 0 <= idx < len(cs):
-    print(cs[idx]['id'])
-PYPARSE
-)
-
-    if [[ -z "$CID" ]]; then
-        log_err "Invalid selection"
-        return
-    fi
-
-    echo ""
-    curl -sf "$API/containers/$CID/logs" 2>/dev/null | python3 -c "
-import sys, json
-logs = json.load(sys.stdin).get('logs','')
-for line in logs.splitlines()[-50:]:
-    print(f'  \033[2m{line}\033[0m')
-"
+    tput smcup 2>/dev/null; tput civis 2>/dev/null
 }
 
-# ── main loop ────────────────────────────────────────────────
-MENU_ITEMS=(
-    "  [1] ${W}status${N}            — show running containers"
-    "  [2] ${W}deploy${N}            — start a new container"
-    "  [3] ${W}stop${N}              — stop / remove a container"
-    "  [4] ${W}logs${N}              — system logs"
-    "  [5] ${W}container logs${N}    — logs from a specific container"
-    "  [6] ${W}open browser${N}      — open the web dashboard"
-    "  [7] ${W}refresh${N}           — redraw this screen"
-    "  [q] ${W}quit${N}              — stop server and exit"
-)
+# ── tui_exit ──────────────────────────────────────────────────
+tui_exit() {
+    tput rmcup 2>/dev/null    # restore original scrollback
+    tput cnorm 2>/dev/null
+    printf "\n"
+    log_warn "Stopping API server (PID $APP_PID)..."
+    kill "$APP_PID" 2>/dev/null || true
+    log_ok "Server stopped. Goodbye! 👋"
+    printf "\n"
+    exit 0
+}
 
+# ── main htop-style live dashboard ───────────────────────────
 main_loop() {
+    # Switch to the terminal's alternate screen buffer
+    # (same trick htop, vim, less, etc. use)
+    tput smcup 2>/dev/null
+    tput civis 2>/dev/null   # hide cursor
+
+    trap 'tput rmcup 2>/dev/null; tput cnorm 2>/dev/null
+          printf "\n"; log_warn "Interrupted."; exit 1' INT TERM
+
+    local last_render=0
+
     while true; do
-        clear
-        draw_header
+        local now_ts; now_ts=$(date +%s)
 
-        echo -e "  ${G}${BOLD}Live Status${N}"
-        separator
-        fetch_status
-        separator
+        # ── fetch & repaint every 3 seconds ──────────────────
+        if (( now_ts - last_render >= 3 )); then
+            local JSON
+            JSON=$(curl -sf "$API/containers" 2>/dev/null || echo '{"containers":[]}')
+            render_screen "$JSON"
+            last_render=$now_ts
+        fi
 
-        echo ""
-        echo -e "  ${C}${BOLD}Commands${N}"
-        for item in "${MENU_ITEMS[@]}"; do
-            echo -e "$item"
-        done
-        echo ""
-        separator
-        echo -ne "  ${W}▸ ${N}"
-        read -r CMD
+        # ── poll for a single keypress (0.3 s window) ────────
+        # No Enter required — just like htop
+        local KEY=""
+        IFS= read -r -s -n1 -t 0.3 KEY 2>/dev/null || true
 
-        case "$CMD" in
-            1|status)         fetch_status; echo ""; read -rp "  Press Enter to continue..." ;;
-            2|deploy)         cmd_deploy;   echo ""; read -rp "  Press Enter to continue..." ;;
-            3|stop)           cmd_stop;     echo ""; read -rp "  Press Enter to continue..." ;;
-            4|logs)           cmd_logs;     echo ""; read -rp "  Press Enter to continue..." ;;
-            5|"container logs"|cl) cmd_container_logs; echo ""; read -rp "  Press Enter to continue..." ;;
-            6|open|browser)   cmd_open;     sleep 1 ;;
-            7|refresh)        : ;;
-            q|quit|exit)
-                echo ""
-                log_warn "Stopping server (PID $APP_PID)..."
-                kill "$APP_PID" 2>/dev/null || true
-                log_ok "Server stopped. Goodbye."
-                echo ""
-                exit 0
-                ;;
-            *)
-                log_warn "Unknown command: '$CMD'"
-                sleep 1
-                ;;
+        case "$KEY" in
+            d|D)  cmd_deploy;           last_render=0 ;;
+            s|S)  cmd_stop;             last_render=0 ;;
+            l|L)  cmd_container_logs;   last_render=0 ;;
+            r|R)  last_render=0 ;;          # force immediate repaint
+            q|Q)  tui_exit ;;
         esac
     done
 }
 
 # ───────────────────────────── GO! ──────────────────────────
+set +e
 main_loop
