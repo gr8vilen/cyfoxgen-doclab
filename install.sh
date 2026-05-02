@@ -134,7 +134,11 @@ if [[ ${#MISSING_PKGS[@]} -eq 0 ]]; then
     log_ok "All Python packages present"
 else
     log_warn "Installing: ${MISSING_PKGS[*]}"
-    python3 -m pip install --quiet flask flask-cors docker requests 2>&1 | tail -2 | sed 's/^/  /'
+    PIP_FLAGS=""
+    if python3 -m pip help install 2>/dev/null | grep -q "break-system-packages"; then
+        PIP_FLAGS="--break-system-packages"
+    fi
+    python3 -m pip install --quiet $PIP_FLAGS flask flask-cors docker requests 2>&1 | tail -2 | sed 's/^/  /'
     log_ok "Packages installed"
 fi
 
