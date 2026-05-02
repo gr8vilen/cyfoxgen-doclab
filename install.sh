@@ -36,7 +36,7 @@ cat << 'EOF'
   / __/ /  _/ / __/ / _]/ // ___]|  \| ||  ] /    ||   \|    |
  / /__ |  |  / /__  | [_| / |___|  \\  | [  ||  o  ||    | |  |
 /_____||___| /____| |___/ \_____||_|\_||____||     ||_\__|_|__|
-      D O C K E R   L A B   M A N A G E R   —   v1.0
+      D O C K E R   L A B   M A N A G E R   —   v2.0
 EOF
 echo -e "${N}"
 separator
@@ -557,7 +557,16 @@ sleep 1
 LOG_FILE="$APP_DIR/server.log"
 $DOCKER_CMD network create lab-network 2>/dev/null || true
 
-nohup python3 "$APP_DIR/app.py" > "$LOG_FILE" 2>&1 &
+if [[ "$DOCKER_CMD" == "sudo docker" ]]; then
+    if command -v sg &>/dev/null; then
+        sg docker -c "nohup python3 \"$APP_DIR/app.py\" > \"$LOG_FILE\" 2>&1 &"
+    else
+        sudo chmod 666 /var/run/docker.sock 2>/dev/null || true
+        nohup python3 "$APP_DIR/app.py" > "$LOG_FILE" 2>&1 &
+    fi
+else
+    nohup python3 "$APP_DIR/app.py" > "$LOG_FILE" 2>&1 &
+fi
 APP_PID=$!
 echo "$APP_PID" > "$APP_DIR/app.pid"
 
