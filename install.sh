@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ============================================================
-#  cyfoxgen-doclab  —  One-file installer + terminal dashboard
+#  uneo-HACKLAB  —  One-file installer + terminal dashboard
 #  Usage:
-#    curl -fsSL https://raw.githubusercontent.com/gr8vilen/cyfoxgen-doclab/main/install.sh | bash
+#    curl -fsSL https://raw.githubusercontent.com/gr8vilen/uneo-HACKLAB/main/install.sh | bash
 #    — or —
 #    bash install.sh
 # ============================================================
@@ -32,11 +32,13 @@ separator() { echo -e "${D}─────────────────�
 clear
 echo -e "${G}"
 cat << 'EOF'
-   ____  ____  ____  __  __ ____  __  _  __   ____  ___  ____
-  / __/ /  _/ / __/ / _]/ // ___]|  \| ||  ] /    ||   \|    |
- / /__ |  |  / /__  | [_| / |___|  \\  | [  ||  o  ||    | |  |
-/_____||___| /____| |___/ \_____||_|\_||____||     ||_\__|_|__|
-      D O C K E R   L A B   M A N A G E R   —   v2.0
+
+ _     _      _____ ____ 
+/ \ /\/ \  /|/  __//  _ \
+| | ||| |\ |||  \  | / \|
+| \_/|| | \|||  /_ | \_/|
+\____/\_/  \|\____\\____/
+HACKLAB DOC v3
 EOF
 echo -e "${N}"
 separator
@@ -53,10 +55,14 @@ PKG_MGR=""
 
 if [[ -n "${PREFIX:-}" && "${PREFIX:-}" == *"/com.termux/"* ]]; then
     OS="termux"
-    log_err "Android (Termux) detected. Docker Engine cannot run natively on Android without root and custom kernels."
-    log_warn "If you are trying to connect to a remote Docker host, you need to set DOCKER_HOST manually."
-    log_warn "This installer is currently for Linux, macOS, and Windows WSL."
-    exit 1
+    if command -v docker &>/dev/null; then
+        log_ok "Termux detected (Docker command found)"
+    else
+        log_err "Android (Termux) detected. Docker Engine cannot run natively on Android."
+        log_warn "If using a remote host, install the docker client: 'pkg install docker'"
+        log_warn "Then set 'DOCKER_HOST' and re-run."
+        exit 1
+    fi
 elif [[ "$OSTYPE" == "darwin"* ]]; then
     OS="macos"
     log_ok "macOS detected"
@@ -76,7 +82,12 @@ fi
 if [[ "$OS" == "termux" ]]; then
     PKG_MGR="pkg"
 elif [[ "$OS" == "macos" ]]; then
-    PKG_MGR="brew"
+    if command -v brew &>/dev/null; then
+        PKG_MGR="brew"
+    else
+        log_err "Homebrew (brew) not found on macOS. Please install it first: https://brew.sh"
+        exit 1
+    fi
 elif command -v apt-get &>/dev/null; then
     PKG_MGR="apt"
 elif command -v dnf &>/dev/null; then
@@ -85,8 +96,10 @@ elif command -v yum &>/dev/null; then
     PKG_MGR="yum"
 elif command -v pacman &>/dev/null; then
     PKG_MGR="pacman"
+elif command -v apk &>/dev/null; then
+    PKG_MGR="apk"
 else
-    log_err "No supported package manager found (apt/dnf/yum/pacman/brew)"
+    log_err "No supported package manager found (apt/dnf/yum/pacman/brew/apk)"
     exit 1
 fi
 
@@ -113,10 +126,12 @@ if command -v python3 &>/dev/null && python3 -c "import sys; sys.exit(0 if sys.v
 else
     log_warn "Python 3.8+ not found — installing..."
     case "$PKG_MGR" in
-        apt)     sudo apt-get update -qq && apt_install python3 python3-pip python3-venv ;;
-        dnf|yum) dnf_install python3 python3-pip ;;
-        pacman)  sudo pacman -Sy --noconfirm python python-pip ;;
-        brew)    brew_install python@3 ;;
+        pkg)     pkg install -y python python-pip curl ;;
+        apk)     apk add --no-cache python3 py3-pip curl ;;
+        apt)     sudo apt-get update -qq && apt_install python3 python3-pip python3-venv curl ;;
+        dnf|yum) dnf_install python3 python3-pip curl ;;
+        pacman)  sudo pacman -Sy --noconfirm python python-pip curl ;;
+        brew)    brew_install python@3 curl ;;
     esac
     log_ok "Python 3 installed: $(python3 --version)"
 fi
@@ -147,8 +162,15 @@ if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
     log_ok "Docker running: v$DOCKER_VER"
 else
     if ! command -v docker &>/dev/null; then
+        if [[ "$OS" == "termux" ]]; then
+            log_err "Docker client not found. Please run 'pkg install docker' and set DOCKER_HOST."
+            exit 1
+        fi
         log_warn "Docker not found — installing..."
         case "$PKG_MGR" in
+            apk)
+                apk add --no-cache docker
+                ;;
             apt)
                 sudo apt-get update -qq
                 apt_install ca-certificates curl gnupg lsb-release
@@ -210,13 +232,13 @@ echo ""
 # ───────────────────────────── WRITE APP.PY ─────────────────
 log_step "Writing Docker Lab Manager app..."
 
-APP_DIR="$HOME/.cyfoxgen-doclab"
+APP_DIR="$HOME/.uneo-HACKLAB"
 mkdir -p "$APP_DIR"
 
 cat > "$APP_DIR/app.py" << 'PYEOF'
 #!/usr/bin/env python3
 """
-cyfoxgen-doclab — Docker Lab Manager
+uneo-HACKLAB — Docker Lab Manager
 Pure REST API (no web UI — CLI dashboard only)
 """
 
@@ -291,7 +313,7 @@ class NetworkManager:
 
 @app.route('/')
 def index():
-    return jsonify({"service": "cyfoxgen-doclab", "status": "ok", "hint": "Use the CLI dashboard"})
+    return jsonify({"service": "uneo-HACKLAB", "status": "ok", "hint": "Use the CLI dashboard"})
 
 @app.route('/system-logs')
 def get_logs():
@@ -300,6 +322,7 @@ def get_logs():
 
 @app.route('/health')
 def health():
+    add_log("API Health check", 'info')
     return jsonify({"status": "ok", "containers": len(containers), "password": API_PASSWORD})
 
 @app.route('/deploy', methods=['POST'])
@@ -317,31 +340,36 @@ def deploy():
     vols    = data.get('volumes', {})
     cmd     = data.get('command')
 
-    add_log(f"Deploying {name} ({image})", 'deployment')
+    add_log(f"🚀 Deployment request: {name} (img: {image})", 'deployment')
+    
     try:
+        add_log(f"📥 Pulling image layers: {image}...", 'info')
         client.images.pull(image)
-        add_log(f"Image pulled: {image}", 'deployment')
+        add_log(f"📦 Image downloaded successfully.", 'info')
     except Exception as e:
-        add_log(f"Pull warning: {e}", 'warning')
+        add_log(f"⚠️ Image pull note: {e}", 'warning')
 
     try:
+        add_log(f"🔗 Attaching to network: {network_mgr.net_name}", 'info')
         c = client.containers.run(
             image, name=name, environment=env, volumes=vols,
             command=cmd, network=network_mgr.net_name,
             detach=True, remove=False
         )
+        add_log(f"🛠️ Container created: {c.short_id}", 'info')
         c.reload()
         ip = c.attrs['NetworkSettings']['Networks'][network_mgr.net_name]['IPAddress']
         ports = list((c.attrs.get('Config',{}).get('ExposedPorts') or {}).keys())
         info = {'id': c.id, 'name': name, 'image': image, 'ip': ip,
                 'status': c.status, 'ports': ports, 'created': time.time()}
         containers[c.id] = info
-        add_log(f"✅ {name} running at {ip}", 'deployment')
+        add_log(f"✨ {name} is READY at {ip}", 'deployment')
         return jsonify({"success": True, "container": info}), 201
     except docker.errors.ImageNotFound:
+        add_log(f"❌ Error: Image '{image}' not found", 'error')
         return jsonify({"error": f"Image not found: {image}"}), 404
     except Exception as e:
-        add_log(f"Deploy failed: {e}", 'error')
+        add_log(f"❌ Deployment failed: {e}", 'error')
         return jsonify({"error": str(e)}), 500
 
 @app.route('/containers')
@@ -398,7 +426,9 @@ def container_logs(cid):
 def cleanup():
     data = request.get_json() or {}
     if data.get('password') != API_PASSWORD:
+        add_log("Unauthorized cleanup attempt", 'error')
         return jsonify({"error": "Invalid password"}), 401
+    add_log("🧹 Starting session cleanup...", 'warning')
     removed = []
     for cid in list(containers):
         try:
@@ -406,9 +436,10 @@ def cleanup():
             info = containers.pop(cid)
             network_mgr.release(info['ip'])
             removed.append(info['name'])
+            add_log(f"Removed: {info['name']}", 'info')
         except Exception:
             containers.pop(cid, None)
-    add_log(f"Cleanup: removed {len(removed)} containers", 'warning')
+    add_log(f"✅ Cleanup finished. Removed {len(removed)} containers", 'deployment')
     return jsonify({"success": True, "removed": removed})
 
 def _cleanup_loop():
@@ -427,7 +458,7 @@ def _cleanup_loop():
 
 if __name__ == '__main__':
     network_mgr = NetworkManager()
-    add_log("🐳 cyfoxgen DocLab started", 'info')
+    add_log("🐳 uneo HACKLAB started", 'info')
     add_log(f"🔑 Password: {API_PASSWORD}", 'info')
     add_log("🚀 Ready to deploy containers", 'info')
     threading.Thread(target=_cleanup_loop, daemon=True).start()
@@ -498,7 +529,7 @@ log_step "Writing Textual TUI app..."
 cat > "$APP_DIR/tui.py" << 'TUIEOF'
 #!/usr/bin/env python3
 """
-cyfoxgen DocLab — Textual TUI v4
+uneo HACKLAB — Textual TUI v4
 Responsive split-pane layout with live logs, status badges, and animated header.
 Keys: q=quit  r=refresh  s=stop selected  d=deploy  up/down=navigate
 """
@@ -682,7 +713,7 @@ Screen {
     background: #030803;
     border-top: tall #0a2a0a;
     dock: bottom;
-    display: none;
+    display: block; /* Visible by default */
 }
 
 #syslog-panel.visible {
@@ -759,14 +790,15 @@ class ContainerItem(Static):
         self.refresh()
 
 # ── Main TUI App ───────────────────────────────────────────────────────────────
-class DocLabTUI(App):
+class HACKLABTUI(App):
     CSS      = CSS
-    TITLE    = "cyfoxgen DocLab"
+    TITLE    = "uneo HACKLAB"
     BINDINGS = [
         Binding("q",          "quit",       "Quit",       show=True,  priority=True),
         Binding("r",          "refresh",    "Refresh",    show=True),
         Binding("s",          "stop",       "Stop",       show=True),
-        Binding("l",          "toggle_log", "Sys Logs",   show=True),
+        Binding("l",          "toggle_log", "Logs",       show=True),
+        Binding("h",          "show_help",  "Help",       show=True),
         Binding("up",         "cursor_up",  "Up",         show=False),
         Binding("down",       "cursor_down","Down",       show=False),
         Binding("k",          "cursor_up",  "Up",         show=False),
@@ -775,13 +807,14 @@ class DocLabTUI(App):
 
     _containers:    list  = []
     _selected_idx:  int   = 0
-    _syslog_visible: bool = False
+    _syslog_visible: bool = True  # Start with logs visible
     _tick:          int   = 0
+    _last_activity: str   = "Starting..."
 
     # ── Compose ─────────────────────────────────────────────────────────────
     def compose(self) -> ComposeResult:
         yield Static(
-            f"  CYFOXGEN DOCLAB  |  KEY: {PASS}  |  PID: {API_PID}",
+            f"  uneo HACKLAB  |  KEY: {PASS}  |  PID: {API_PID}",
             id="header-bar"
         )
         yield Static("", id="stats-bar")
@@ -790,7 +823,7 @@ class DocLabTUI(App):
             with Vertical(id="left-pane"):
                 yield Static("  CONTAINERS", id="pane-title-left")
                 yield Static(
-                    "\n\n  No containers found.\n  Deploy one to get started.",
+                    "\n\n  [bold #1aff6e]No active containers.[/]\n\n",
                     id="empty-state"
                 )
             # Right: detail + logs
@@ -815,6 +848,7 @@ class DocLabTUI(App):
         self.set_interval(1, self._update_header)
         self._do_refresh()
 
+
     # ── Header / stats ───────────────────────────────────────────────────────
     def _update_header(self) -> None:
         self._tick += 1
@@ -826,13 +860,13 @@ class DocLabTUI(App):
         pulse = ("◉", "◎", "◉", "○")[self._tick % 4] if running > 0 else "○"
 
         self.query_one("#header-bar", Static).update(
-            f"  ░▒▓ CYFOXGEN DOCLAB ▓▒░   {pulse} LIVE   "
+            f"  ░▒▓  UNEO HACKLAB ▓▒░   {pulse} LIVE   "
             f"│  KEY: {PASS}  │  PID: {API_PID}  │  {now}"
         )
         self.query_one("#stats-bar", Static).update(
-            f"  ▸ Running: {running}  ▸ Total: {total}  "
-            f"▸ API: localhost:62111  "
-            f"▸ Selected: {self._containers[self._selected_idx]['name'] if self._containers else '—'}"
+            f"  [#1aff6e]▶[/] Running: {running}/{total}  "
+            f" [#1aff6e]▶[/] Selected: {self._containers[self._selected_idx]['name'] if self._containers else '—'}  "
+            f" [#1aff6e]▶[/] Last Activity: {self._last_activity}"
         )
 
     # ── Scheduled & manual refresh ───────────────────────────────────────────
@@ -864,7 +898,7 @@ class DocLabTUI(App):
         sr = api("GET", "/system-logs")
         if sr:
             slogs = sr.get("logs", [])
-
+        
         self.call_from_thread(self._redraw, cs, logs_text, slogs)
 
     def _redraw(self, cs: list, logs_text: str, slogs: list) -> None:
@@ -931,10 +965,12 @@ class DocLabTUI(App):
         # Update syslog
         syslog_widget = self.query_one("#syslog-view", RichLog)
         syslog_widget.clear()
+        last_msg = "No activity"
         for entry in slogs[-30:]:
             ts   = entry.get("timestamp", "")
             msg  = entry.get("message", "")
             kind = entry.get("type", "info")
+            last_msg = msg
             color = {
                 "error":      "#ff4444",
                 "warning":    "#ffcc00",
@@ -947,6 +983,10 @@ class DocLabTUI(App):
                     (msg, Style(color=color)),
                 )
             )
+
+        # Update stats bar with latest activity
+        if slogs:
+            self._last_activity = slogs[-1].get("message", "No activity")
 
     def _update_detail(self, c) -> None:
         detail  = self.query_one("#detail-panel", Static)
@@ -1017,7 +1057,6 @@ class DocLabTUI(App):
     # ── Stop action ──────────────────────────────────────────────────────────
     def action_stop(self) -> None:
         if not self._containers:
-            self.notify("No containers.", severity="warning")
             return
         c = self._containers[self._selected_idx]
         if c.get("status") != "running":
@@ -1049,6 +1088,21 @@ class DocLabTUI(App):
         else:
             panel.remove_class("visible")
 
+    # ── Help ─────────────────────────────────────────────────────────────────
+    def action_show_help(self) -> None:
+        help_msg = (
+            "           [bold #1aff6e]HACKLAB TUI HELP[/]\n\n"
+            "  [#1aff6e][Q][/]  Quit the TUI and Stop API server\n"
+            "  [#1aff6e][R][/]  Force refresh container list/logs\n"
+            "  [#1aff6e][S][/]  Stop and remove selected container\n"
+            "  [#1aff6e][L][/]  Toggle system logs panel visibility\n"
+            "  [#1aff6e][H][/]  Show this help message\n\n"
+            "  [#1aff6e][↑/↓][/] or [#1aff6e][J/K][/] to navigate list\n\n"
+            "  Every action is logged in the bottom panel.\n"
+            "  Deployment is done via the API port 62111."
+        )
+        self.notify(help_msg, title="How to use", timeout=10)
+
     # ── Quit ─────────────────────────────────────────────────────────────────
     def action_quit(self) -> None:
         if API_PID:
@@ -1060,7 +1114,7 @@ class DocLabTUI(App):
 
 
 if __name__ == "__main__":
-    DocLabTUI().run()
+    HACKLABTUI().run()
 TUIEOF
 
 log_ok "TUI written to $APP_DIR/tui.py"
@@ -1077,7 +1131,7 @@ log_ok "Removed $CLEANED old container(s)"
 echo ""
 
 # ───────────────────────────── LAUNCH TUI ───────────────────
-log_step "Launching DocLab TUI..."
+log_step "Launching HACKLAB TUI..."
 echo ""
 python3 "$APP_DIR/tui.py" "$LAB_PASSWORD" "$APP_PID"
 
