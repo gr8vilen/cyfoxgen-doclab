@@ -38,7 +38,7 @@ cat << 'EOF'
 | | ||| |\ |||  \  | / \|
 | \_/|| | \|||  /_ | \_/|
 \____/\_/  \|\____\\____/
-HACKLAB DOC v5
+HACKLAB DOC v6
 EOF
 echo -e "${N}"
 separator
@@ -877,13 +877,24 @@ class HACKLABTUI(App):
             yield RichLog(id="syslog-view", highlight=False, markup=False, wrap=True)
         yield Footer()
 
-    # ── Mount ────────────────────────────────────────────────────────────────
+    # ── Mount ─────────────────────────────────────────────────────────────────
     def on_mount(self) -> None:
+        import sys
+        # Disable all-motion mouse tracking ( [?1003h) that macOS Terminal
+        # beeps for on every mouse move. This TUI is keyboard-only anyway.
+        sys.stdout.write("\x1b[?1003l\x1b[?1002l\x1b[?1001l\x1b[?1000l")
+        sys.stdout.flush()
         self._update_header()
         self.set_interval(4, self._scheduled_refresh)
         self.set_interval(1, self._update_header)
         self._do_refresh()
 
+    # ── Silence all mouse events (keyboard-only TUI) ────────────────────────
+    def on_mouse_move(self, event) -> None:        event.stop()
+    def on_mouse_down(self, event) -> None:        event.stop()
+    def on_mouse_up(self, event) -> None:          event.stop()
+    def on_scroll_up(self, event) -> None:         event.stop()
+    def on_scroll_down(self, event) -> None:       event.stop()
 
     # ── Header / stats ───────────────────────────────────────────────────────
     def _update_header(self) -> None:
