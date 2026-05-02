@@ -244,6 +244,33 @@ fi
 DOCKER_CMD="${DOCKER_CMD:-docker}"
 echo ""
 
+# ── macOS: Enable direct container IP routing ────────────────
+if [[ "$OS" == "macos" ]]; then
+    log_step "Setting up direct container IP routing for macOS..."
+    log_info "On macOS, Docker runs in a VM so container IPs (172.x.x.x) are"
+    log_info "not reachable by default. Installing docker-mac-net-connect to fix this."
+
+    if brew list chipmk/tap/docker-mac-net-connect &>/dev/null 2>&1; then
+        log_ok "docker-mac-net-connect already installed"
+    else
+        log_warn "Installing docker-mac-net-connect (requires sudo for service)..."
+        brew tap chipmk/tap 2>&1 | tail -1 | sed 's/^/  /'
+        brew install chipmk/tap/docker-mac-net-connect 2>&1 | tail -3 | sed 's/^/  /'
+        log_ok "docker-mac-net-connect installed"
+    fi
+
+    # Start the service (creates WireGuard tunnel to Docker's VM network)
+    if sudo brew services list 2>/dev/null | grep -q "docker-mac-net-connect.*started"; then
+        log_ok "docker-mac-net-connect tunnel already running"
+    else
+        log_warn "Starting tunnel (sudo required)..."
+        sudo brew services start chipmk/tap/docker-mac-net-connect 2>&1 | sed 's/^/  /' || true
+        sleep 2
+        log_ok "Tunnel started — container IPs (172.x.x.x) now directly routable"
+    fi
+    echo ""
+fi
+
 # ───────────────────────────── WRITE APP.PY ─────────────────
 log_step "Writing Docker Lab Manager app..."
 
@@ -369,67 +396,40 @@ def deploy():
     env     = data.get('environment', {})
     vols    = data.get('volumes', {})
     cmd     = data.get('command')
-    # Caller can pass explicit port mappings; if not, we auto-map all exposed ports.
-    req_ports = data.get('ports', None)
 
     add_log(f"\U0001f680 Deployment request: {name} (img: {image})", 'deployment')
 
     try:
-        add_log(f"\U0001f4e5 Pulling image layers: {image}...", 'info')
+        add_log(f"\U0001f4e5 Pulling image: {image}...", 'info')
         client.images.pull(image)
-        add_log(f"\U0001f4e6 Image downloaded successfully.", 'info')
+        add_log(f"\U0001f4e6 Image ready.", 'info')
     except Exception as e:
         add_log(f"\u26a0\ufe0f Image pull note: {e}", 'warning')
 
     try:
-        # Inspect image to find all exposed ports
-        img_info     = client.images.get(image)
-        exposed      = list((img_info.attrs.get('Config', {}).get('ExposedPorts') or {}).keys())
-        # Build ports dict: {"80/tcp": None} means map to random host port
-        if req_ports:
-            ports_map = req_ports
-        else:
-            ports_map = {p: None for p in exposed}  # None = auto-assign
-
-        add_log(f"\U0001f517 Attaching to network: {network_mgr.net_name}", 'info')
+        add_log(f"\U0001f3d7\ufe0f Creating container: {name}", 'deployment')
         c = client.containers.run(
             image, name=name, environment=env, volumes=vols,
             command=cmd, network=network_mgr.net_name,
-            ports=ports_map,
             detach=True, remove=False
         )
-        add_log(f"\U0001f6e0\ufe0f Container created: {c.short_id}", 'info')
         c.reload()
-
-        net_info  = c.attrs['NetworkSettings']
-        ip        = net_info['Networks'].get(network_mgr.net_name, {}).get('IPAddress', 'n/a')
-
-        # Build human-readable host port mappings: {"80/tcp": "localhost:32768"}
-        host_ports = {}
-        raw_ports  = net_info.get('Ports') or {}
-        for cport, bindings in raw_ports.items():
-            if bindings:
-                host_ports[cport] = f"localhost:{bindings[0]['HostPort']}"
-
-        access = list(host_ports.values()) if host_ports else []
-
-        info = {
-            'id':         c.id,
-            'name':       name,
-            'image':      image,
-            'ip':         ip,
-            'host_ports': host_ports,
-            'access':     access,
-            'status':     c.status,
-            'ports':      exposed,
-            'created':    time.time()
+        ip    = c.attrs['NetworkSettings']['Networks'][network_mgr.net_name]['IPAddress']
+        ports = list((c.attrs.get('Config', {}).get('ExposedPorts') or {}).keys())
+        info  = {
+            'id':      c.id,
+            'name':    name,
+            'image':   image,
+            'ip':      ip,
+            'status':  c.status,
+            'ports':   ports,
+            'created': time.time()
         }
         containers[c.id] = info
-        access_str = ', '.join(access) or ip
-        add_log(f"\u2728 {name} is READY  ->  {access_str}", 'deployment')
+        add_log(f"\u2728 {name} is READY at {ip}", 'deployment')
         return jsonify({"success": True, "container": info}), 201
     except docker.errors.ImageNotFound:
-        add_log(f"\u274c Error: Image '{image}' not found", 'error')
+        add_log(f"\u274c Image '{image}' not found", 'error')
         return jsonify({"error": f"Image not found: {image}"}), 404
     except Exception as e:
         add_log(f"\u274c Deployment failed: {e}", 'error')
@@ -442,14 +442,6 @@ def list_containers():
         try:
             c = client.containers.get(cid)
             containers[cid]['status'] = c.status
-            # Refresh host port mappings (they can change)
-            raw_ports = c.attrs['NetworkSettings'].get('Ports') or {}
-            host_ports = {}
-            for cport, bindings in raw_ports.items():
-                if bindings:
-                    host_ports[cport] = f"localhost:{bindings[0]['HostPort']}"
-            containers[cid]['host_ports'] = host_ports
-            containers[cid]['access']     = list(host_ports.values())
         except docker.errors.NotFound:
             info = containers.pop(cid)
             network_mgr.release(info.get('ip', ''))
@@ -681,17 +673,15 @@ def draw(tick):
         out.append(f"\n  {DIM}No active containers.{RESET}\n")
     else:
         for i, c in enumerate(containers):
-            status     = c.get("status", "?")
-            name       = c.get("name",   "?")
-            image      = c.get("image",  "?")
-            ip         = c.get("ip",     "?")
-            access     = c.get("access", [])       # localhost:PORT list
-            host_ports = c.get("host_ports", {})
-            ports      = ", ".join(c.get("ports", [])) or "none"
-            cid        = c.get("id", "?")[:12]
-            age_s      = int(time.time() - c.get("created", time.time()))
-            age        = f"{age_s//3600}h{(age_s%3600)//60}m{age_s%60}s"
-            short      = (image.split("/")[-1] if "/" in image else image)[:28]
+            status = c.get("status", "?")
+            name   = c.get("name",   "?")
+            image  = c.get("image",  "?")
+            ip     = c.get("ip",     "?")
+            ports  = ", ".join(c.get("ports", [])) or "none"
+            cid    = c.get("id", "?")[:12]
+            age_s  = int(time.time() - c.get("created", time.time()))
+            age    = f"{age_s//3600}h{(age_s%3600)//60}m{age_s%60}s"
+            short  = (image.split("/")[-1] if "/" in image else image)[:28]
 
             if status == "running":
                 badge, nc = f"{GREEN}\u25cf RUNNING{RESET}", GREEN
@@ -701,21 +691,15 @@ def draw(tick):
                 badge, nc = f"{YELLOW}\u25cc {status.upper()[:7]}{RESET}", YELLOW
 
             out.append(f"  {badge}  {nc}{BOLD}{name}{RESET}  {DIM}{short}{RESET}")
-
-            # Show localhost access addresses prominently (macOS can't reach internal IPs)
-            if access:
-                access_str = "  ".join(f"{CYAN}{a}{RESET}" for a in access)
-                out.append(f"  {GREEN}\u2192 ACCESS:{RESET} {access_str}")
-            else:
-                out.append(f"  {YELLOW}\u26a0 No ports exposed  {DIM}(internal IP: {ip}){RESET}")
-
             out.append(
+                f"  {DKGRN}IP:{RESET} {CYAN}{ip}{RESET}"
+                f"  {DKGRN}Ports:{RESET} {ports}"
                 f"  {DKGRN}ID:{RESET} {DIM}{cid}...{RESET}"
-                f"  {DKGRN}Exposed:{RESET} {ports}"
                 f"  {DKGRN}Up:{RESET} {age}"
             )
             if i < len(containers) - 1:
                 out.append(hline("\u2504", cols))
+
 
 
     out.append(hline("\u2500", cols))
