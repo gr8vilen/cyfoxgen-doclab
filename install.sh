@@ -487,296 +487,407 @@ LAB_PASSWORD=$(curl -sf http://localhost:62111/health | \
 log_ok "Server running (PID $APP_PID)"
 echo ""
 
-# ───────────────────────────── TERMINAL UI ──────────────────
-# htop-style: alternate screen buffer, cursor-home in-place
-# redraws (zero flicker), single-char keypresses (no Enter).
+# ───────────────────────────── WRITE TUI.PY ─────────────────
+log_step "Writing Textual TUI app..."
 
-API="http://localhost:62111"
-PASS="$LAB_PASSWORD"
+cat > "$APP_DIR/tui.py" << 'TUIEOF'
+#!/usr/bin/env python3
+"""
+cyfoxgen DocLab — Textual TUI
+Monitoring dashboard: system logs (left) + container cards with logs (right).
+Usage: python3 tui.py <password> <api_pid>
+"""
 
-# ── primitive helpers ─────────────────────────────────────────
-thin_sep() {
-    local cols; cols=$(tput cols 2>/dev/null || echo 100)
-    printf "${D}"; printf '┄%.0s' $(seq 1 "$cols"); printf "${N}\n"
+import sys, os, json, time, threading
+import urllib.request, urllib.error
+
+PASS    = sys.argv[1] if len(sys.argv) > 1 else ""
+API_PID = sys.argv[2] if len(sys.argv) > 2 else ""
+API     = "http://localhost:62111"
+
+# ── API helpers ───────────────────────────────────────────────
+def api(method, path, body=None):
+    try:
+        data = json.dumps(body).encode() if body else None
+        req  = urllib.request.Request(
+            f"{API}{path}", data=data, method=method,
+            headers={"Content-Type": "application/json"} if data else {}
+        )
+        with urllib.request.urlopen(req, timeout=4) as r:
+            return json.loads(r.read())
+    except Exception:
+        return None
+
+# ── Textual ───────────────────────────────────────────────────
+from textual.app        import App, ComposeResult
+from textual.widgets    import Header, Footer, Static, RichLog, Label
+from textual.containers import Horizontal, Vertical, Container, ScrollableContainer
+from textual.screen     import ModalScreen
+from textual.binding    import Binding
+from textual            import work, on
+from textual.reactive   import reactive
+from rich.text          import Text
+from rich.panel         import Panel
+from rich               import box as rbox
+
+# ── CSS ───────────────────────────────────────────────────────
+CSS = """
+Screen { background: #0a0a0a; }
+
+#logo {
+    height: 8;
+    color: #00ff41;
+    text-style: bold;
+    border-bottom: solid #1c3a1c;
+    padding: 0 2;
 }
 
-# ── draw_logo ─────────────────────────────────────────────────
-draw_logo() {
-    printf "${G}${BOLD}"
-    printf "   ██████╗ ██████╗  ██████╗██╗  ██╗██╗      █████╗ ██████╗\n"
-    printf "   ██╔══██╗██╔═══██╗██╔════╝██║ ██╔╝██║     ██╔══██╗██╔══██╗\n"
-    printf "   ██║  ██║██║   ██║██║     █████╔╝ ██║     ███████║██████╔╝\n"
-    printf "   ██║  ██║██║   ██║██║     ██╔═██╗ ██║     ██╔══██║██╔══██╗\n"
-    printf "   ██████╔╝╚██████╔╝╚██████╗██║  ██╗███████╗██║  ██║██████╔╝\n"
-    printf "   ╚═════╝  ╚═════╝  ╚═════╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═════╝\n"
-    printf "${C}            D O C K E R   L A B   M A N A G E R   v2.0${N}\n\n"
+#statusbar {
+    height: 1;
+    background: #001800;
+    color: #00ff41;
+    padding: 0 2;
 }
 
-# ── status bar ────────────────────────────────────────────────
-draw_statusbar() {
-    local now; now=$(date '+%H:%M:%S')
-    thin_sep
-    printf "  ${G}PID:${W}%s${N}   ${Y}KEY:${W}%s${N}   ${C}%s${N}   ${D}API: %s${N}\n" \
-        "$APP_PID" "$PASS" "$now" "$API"
-    thin_sep
+#main {
+    height: 1fr;
 }
 
-# ── containers pane ───────────────────────────────────────────
-render_containers() {
-    local json="$1"
-    printf "\n  ${G}${BOLD}● CONTAINERS${N}\n"
-    printf '%s' "$json" | python3 -c "
-import sys, json
-try:
-    data = json.load(sys.stdin)
-except Exception:
-    print('  \033[31m✘ Cannot parse response\033[0m'); sys.exit(0)
-cs = [c for c in data.get('containers',[]) if 'lab-manager' not in c.get('name','')]
-if not cs:
-    print('  \033[2m  — no containers deployed yet —\033[0m')
-else:
-    G='\033[0;32m'; R='\033[0;31m'; C='\033[0;36m'; Y='\033[0;33m'
-    W='\033[1;37m'; D='\033[2m'; N='\033[0m'; B='\033[1m'
-    for c in cs:
-        sc = G if c.get('status')=='running' else R
-        badge = (f'{sc}▶ RUNNING{N}' if c.get('status')=='running'
-                 else f'{R}■ {c.get(\"status\",\"?\").upper()}{N}')
-        print(f'  {B}╭─ {C}{c.get(\"name\",\"?\")}{N}  {badge}')
-        print(f'  {B}│{N}  {D}IP   {N} {Y}{c.get(\"ip\",\"?\")}{N}')
-        print(f'  {B}│{N}  {D}Image{N} {D}{c.get(\"image\",\"?\")}{N}')
-        print(f'  {B}╰────────────────────────────{N}')
-        print()
-" 2>/dev/null
+/* ── Left: system logs ── */
+#logs-panel {
+    width: 2fr;
+    border: solid #00ff41;
+    border-title-color: #00ff41;
+    border-title-style: bold;
+    background: #050f05;
 }
 
-# ── logs pane ─────────────────────────────────────────────────
-render_logs() {
-    local n="${1:-10}"
-    printf "  ${C}${BOLD}◉ SYSTEM LOGS${D}  (last %s)${N}\n" "$n"
-    curl -sf "$API/system-logs" 2>/dev/null | python3 -c "
-import sys, json
-n = int(sys.argv[1]) if len(sys.argv)>1 else 10
-try:
-    data = json.load(sys.stdin)
-except Exception:
-    print('  \033[31m✘ Cannot parse logs\033[0m'); sys.exit(0)
-logs = data.get('logs',[])[-n:]
-cols = {'info':'\033[0;32m','warning':'\033[0;33m',
-        'error':'\033[0;31m','deployment':'\033[0;36m'}
-D='\033[2m'; N='\033[0m'
-for l in logs:
-    col = cols.get(l.get('type','info'), cols['info'])
-    print(f'  {D}[{l[\"timestamp\"]}]{N} {col}{l[\"message\"]}{N}')
-" "arg0" "$n" 2>/dev/null
+/* ── Right: containers ── */
+#containers-panel {
+    width: 3fr;
+    border: solid #00ccff;
+    border-title-color: #00ccff;
+    border-title-style: bold;
+    background: #05080f;
+    overflow-y: auto;
 }
 
-# ── atomic in-place repaint (htop-style, zero flicker) ───────
-render_screen() {
-    local json="$1" msg="${2:-}"
-    # Move cursor to top-left of the alternate screen buffer
-    printf '\033[H'
-    draw_logo
-    draw_statusbar
-    render_containers "$json"
-    thin_sep
-    render_logs 8
-    thin_sep
-    printf "\n"
-    if [[ -n "$msg" ]]; then
-        printf "  ${Y}${BOLD}%s${N}\n\n" "$msg"
-    fi
-    printf "  ${G}[d]${N}eploy   ${R}[s]${N}top   ${C}[l]${N}ogs   ${W}[q]${N}uit   ${D}(auto-refresh 3s — single key, no Enter)${N}\n"
-    # Erase anything below the current line (clean old content)
-    printf '\033[J'
+.empty-msg {
+    color: #444444;
+    padding: 2 4;
 }
 
-# ── modal: deploy ─────────────────────────────────────────────
-cmd_deploy() {
-    tput rmcup 2>/dev/null    # leave alt screen → show normal terminal
-    tput cnorm 2>/dev/null
-    printf '\033[2J\033[H'
-    printf "\n  ${G}${BOLD}╔══  🚀  DEPLOY NEW CONTAINER  ══╗${N}\n\n"
-    printf "  ${C}Image${N}  (e.g. nginx  ubuntu  alpine  kalilinux/kali-rolling)\n"
-    printf "  ${W}▸ image  : ${N}"; read -r IMAGE
-    if [[ -z "$IMAGE" ]]; then
-        log_warn "Cancelled."; sleep 1
-    else
-        printf "  ${W}▸ name   : ${D}(blank=auto) ${N}";    read -r CNAME
-        printf "  ${W}▸ command: ${D}(blank=default) ${N}"; read -r DCMD
-        printf "\n"
-        local PAYLOAD
-        if [[ -n "$CNAME" && -n "$DCMD" ]]; then
-            PAYLOAD="{\"password\":\"$PASS\",\"image\":\"$IMAGE\",\"name\":\"$CNAME\",\"command\":\"$DCMD\"}"
-        elif [[ -n "$CNAME" ]]; then
-            PAYLOAD="{\"password\":\"$PASS\",\"image\":\"$IMAGE\",\"name\":\"$CNAME\"}"
-        else
-            PAYLOAD="{\"password\":\"$PASS\",\"image\":\"$IMAGE\"}"
-        fi
-        printf "  ${D}⠿ Pulling & deploying...${N}\n"
-        local RESP
-        RESP=$(curl -sf -X POST "$API/deploy" \
-            -H "Content-Type: application/json" -d "$PAYLOAD" 2>&1)
-        if echo "$RESP" | python3 -c \
-            "import sys,json; d=json.load(sys.stdin); exit(0 if d.get('success') else 1)" 2>/dev/null
-        then
-            local IP NM
-            IP=$(echo "$RESP" | python3 -c \
-                "import sys,json; print(json.load(sys.stdin)['container']['ip'])"   2>/dev/null)
-            NM=$(echo "$RESP" | python3 -c \
-                "import sys,json; print(json.load(sys.stdin)['container']['name'])" 2>/dev/null)
-            log_ok "Deployed: ${W}$NM${N}  →  ${Y}$IP${N}"
-        else
-            local ERR
-            ERR=$(echo "$RESP" | python3 -c \
-                "import sys,json; print(json.load(sys.stdin).get('error','?'))" 2>/dev/null \
-                || echo "$RESP")
-            log_err "Deploy failed: $ERR"
-        fi
-        sleep 1
-    fi
-    tput smcup 2>/dev/null    # back to alt screen
-    tput civis 2>/dev/null
+/* Container card */
+.ccard {
+    border: solid #1a3a1a;
+    background: #060f06;
+    margin: 1 1;
+    padding: 0 1;
+    height: auto;
 }
 
-# ── modal: stop ───────────────────────────────────────────────
-cmd_stop() {
-    tput rmcup 2>/dev/null; tput cnorm 2>/dev/null
-    printf '\033[2J\033[H'
-    printf "\n  ${R}${BOLD}╔══  🗑  STOP / REMOVE CONTAINER  ══╗${N}\n\n"
-    local JSON LIST
-    JSON=$(curl -sf "$API/containers" 2>/dev/null || echo '{"containers":[]}')
-    LIST=$(printf '%s' "$JSON" | python3 -c "
-import sys,json
-cs=json.load(sys.stdin).get('containers',[])
-cs=[c for c in cs if 'lab-manager' not in c.get('name','')]
-[print(f'  [{i+1}] \033[0;36m{c[\"name\"]}\033[0m  \033[2m({c[\"ip\"]})\033[0m')
- for i,c in enumerate(cs)]
-" 2>/dev/null)
-    if [[ -z "$LIST" ]]; then
-        log_warn "No containers running."; sleep 2
-    else
-        printf '%s\n\n' "$LIST"
-        printf "  ${C}Number to remove  or  ${W}all${C}:${N}\n"
-        printf "  ${W}▸ ${N}"; read -r CHOICE
-        if [[ "$CHOICE" == "all" ]]; then
-            curl -sf -X POST "$API/cleanup" -H "Content-Type: application/json" \
-                -d "{\"password\":\"$PASS\"}" >/dev/null
-            log_ok "All containers removed."
-        else
-            local CID
-            CID=$(printf '%s' "$JSON" | python3 -c "
-import sys,json
-try:
-    cs=json.load(sys.stdin).get('containers',[])
-    cs=[c for c in cs if 'lab-manager' not in c.get('name','')]
-    print(cs[int(sys.argv[1])-1]['id'])
-except: pass
-" "arg0" "$CHOICE" 2>/dev/null)
-            if [[ -z "$CID" ]]; then log_err "Invalid selection."; else
-                curl -sf -X DELETE "$API/containers/$CID" \
-                    -H "Content-Type: application/json" -d "{\"password\":\"$PASS\"}" >/dev/null
-                log_ok "Container removed."
-            fi
-        fi
-        sleep 1
-    fi
-    tput smcup 2>/dev/null; tput civis 2>/dev/null
+.ccard.running {
+    border: solid #00ff41;
 }
 
-# ── modal: container logs ─────────────────────────────────────
-cmd_container_logs() {
-    tput rmcup 2>/dev/null; tput cnorm 2>/dev/null
-    printf '\033[2J\033[H'
-    printf "\n  ${C}${BOLD}╔══  📜  CONTAINER LOGS  ══╗${N}\n\n"
-    local JSON LIST
-    JSON=$(curl -sf "$API/containers" 2>/dev/null || echo '{"containers":[]}')
-    LIST=$(printf '%s' "$JSON" | python3 -c "
-import sys,json
-cs=json.load(sys.stdin).get('containers',[])
-cs=[c for c in cs if 'lab-manager' not in c.get('name','')]
-[print(f'  [{i+1}] \033[0;36m{c[\"name\"]}\033[0m') for i,c in enumerate(cs)]
-" 2>/dev/null)
-    if [[ -z "$LIST" ]]; then
-        log_warn "No containers running."; sleep 2
-    else
-        printf '%s\n\n' "$LIST"
-        printf "  ${W}▸ select: ${N}"; read -r CHOICE
-        local CID
-        CID=$(printf '%s' "$JSON" | python3 -c "
-import sys,json
-try:
-    cs=json.load(sys.stdin).get('containers',[])
-    cs=[c for c in cs if 'lab-manager' not in c.get('name','')]
-    print(cs[int(sys.argv[1])-1]['id'])
-except: pass
-" "arg0" "$CHOICE" 2>/dev/null)
-        if [[ -z "$CID" ]]; then log_err "Invalid."; sleep 1; else
-            printf "\n"; thin_sep
-            curl -sf "$API/containers/$CID/logs" 2>/dev/null | python3 -c "
-import sys,json
-try:
-    logs=json.load(sys.stdin).get('logs','')
-except: logs='Error reading logs'
-for l in logs.splitlines()[-60:]:
-    print(f'  \033[2m{l}\033[0m')
-" 2>/dev/null
-            thin_sep; printf "\n"
-            read -rp "  Press Enter to return..."
-        fi
-    fi
-    tput smcup 2>/dev/null; tput civis 2>/dev/null
+.ccard.exited {
+    border: solid #ff4444;
 }
 
-# ── tui_exit ──────────────────────────────────────────────────
-tui_exit() {
-    tput rmcup 2>/dev/null    # restore original scrollback
-    tput cnorm 2>/dev/null
-    printf "\n"
-    log_warn "Stopping API server (PID $APP_PID)..."
-    kill "$APP_PID" 2>/dev/null || true
-    log_ok "Server stopped. Goodbye! 👋"
-    printf "\n"
-    exit 0
+.card-header {
+    height: 3;
+    background: #001200;
+    padding: 0 1;
 }
 
-# ── main htop-style live dashboard ───────────────────────────
-main_loop() {
-    # Switch to the terminal's alternate screen buffer
-    # (same trick htop, vim, less, etc. use)
-    tput smcup 2>/dev/null
-    tput civis 2>/dev/null   # hide cursor
+.card-name   { color: #00ffff; text-style: bold; }
+.card-ip     { color: #ffff00; }
+.card-image  { color: #555555; }
+.badge-run   { color: #000000; background: #00ff41; text-style: bold; }
+.badge-exit  { color: #ffffff; background: #ff4444; text-style: bold; }
 
-    trap 'tput rmcup 2>/dev/null; tput cnorm 2>/dev/null
-          printf "\n"; log_warn "Interrupted."; exit 1' INT TERM
-
-    local last_render=0
-
-    while true; do
-        local now_ts; now_ts=$(date +%s)
-
-        # ── fetch & repaint every 3 seconds ──────────────────
-        if (( now_ts - last_render >= 3 )); then
-            local JSON
-            JSON=$(curl -sf "$API/containers" 2>/dev/null || echo '{"containers":[]}')
-            render_screen "$JSON"
-            last_render=$now_ts
-        fi
-
-        # ── poll for a single keypress (0.3 s window) ────────
-        # No Enter required — just like htop
-        local KEY=""
-        IFS= read -r -s -n1 -t 0.3 KEY 2>/dev/null || true
-
-        case "$KEY" in
-            d|D)  cmd_deploy;           last_render=0 ;;
-            s|S)  cmd_stop;             last_render=0 ;;
-            l|L)  cmd_container_logs;   last_render=0 ;;
-            r|R)  last_render=0 ;;          # force immediate repaint
-            q|Q)  tui_exit ;;
-        esac
-    done
+.card-log {
+    height: 6;
+    background: #010901;
+    border-top: solid #1a2a1a;
+    padding: 0 1;
+    overflow: hidden;
 }
 
-# ───────────────────────────── GO! ──────────────────────────
-set +e
-main_loop
+/* ── Modals ── */
+StopScreen  { align: center middle; }
+#stop-box {
+    width: 54;
+    height: auto;
+    border: double #ff4444;
+    background: #0f0303;
+    padding: 1 2;
+}
+.stop-title { color: #ff4444; text-style: bold; margin-bottom: 1; }
+
+Footer { background: #001100; color: #00cc44; }
+"""
+
+from textual.widgets import Button
+
+# ── Stop Modal ────────────────────────────────────────────────
+class StopScreen(ModalScreen):
+    BINDINGS = [Binding("escape", "dismiss", "Cancel")]
+
+    def __init__(self, cinfo: dict):
+        super().__init__()
+        self.cinfo = cinfo
+
+    def compose(self) -> ComposeResult:
+        c = self.cinfo
+        with Container(id="stop-box"):
+            yield Label("🗑  Stop Container", classes="stop-title")
+            yield Label(f"  Name : {c.get('name','?')}")
+            yield Label(f"  IP   : {c.get('ip','?')}")
+            yield Label(f"  Image: {c.get('image','?')}", classes="field-hint")
+            yield Label("")
+            yield Label("  Press  Y  to confirm  or  Escape to cancel")
+            with Horizontal(classes="btn-row"):
+                yield Button("Y — Stop", id="yes", classes="go")
+                yield Button("✕ Cancel", id="nop", classes="cancel")
+
+    @on(Button.Pressed, "#yes")
+    def confirm(self): self.dismiss(True)
+
+    @on(Button.Pressed, "#nop")
+    def cancel(self):  self.dismiss(False)
+
+    def on_key(self, ev):
+        if ev.key == "y": self.dismiss(True)
+
+# ── Container Card widget ─────────────────────────────────────
+class ContainerCard(Static):
+    """One card per container — shows status badge, IP, image, recent logs."""
+
+    def __init__(self, cinfo: dict):
+        super().__init__()
+        self.cinfo = cinfo
+        status = cinfo.get("status", "unknown")
+        self.add_class("ccard")
+        self.add_class("running" if status == "running" else "exited")
+
+    def compose(self) -> ComposeResult:
+        c      = self.cinfo
+        status = c.get("status", "?")
+        is_run = status == "running"
+        badge  = Text(" ▶ RUNNING ", style="bold black on #00ff41") if is_run \
+            else Text(f" ■ {status.upper()} ", style="bold white on #ff4444")
+
+        with Horizontal(classes="card-header"):
+            yield Label(Text.assemble(
+                Text("📦 ", style=""),
+                Text(c.get("name", "?"), style="bold cyan"),
+                Text("  "),
+                badge,
+            ), classes="card-name")
+
+        yield Label(
+            Text.assemble(
+                Text("🌐 ", style=""),
+                Text(c.get("ip", "?"), style="yellow"),
+                Text("   ", style=""),
+                Text(c.get("image", "?"), style="dim"),
+            ),
+            classes="card-ip",
+        )
+        yield RichLog(id=f"clog-{c['id'][:12]}", classes="card-log",
+                      wrap=False, highlight=False, markup=False)
+
+    def on_mount(self):
+        self._load_logs()
+
+    @work(thread=True)
+    def _load_logs(self):
+        cid  = self.cinfo.get("id", "")
+        resp = api("GET", f"/containers/{cid}/logs")
+        raw  = (resp.get("logs", "") if resp else "") or ""
+        lines = [l for l in raw.splitlines() if l.strip()][-15:]
+        def update():
+            try:
+                rlog = self.query_one(f"#clog-{cid[:12]}", RichLog)
+                if not lines:
+                    rlog.write("[dim]no logs yet[/dim]")
+                else:
+                    for line in lines:
+                        rlog.write(line)
+                rlog.scroll_end(animate=False)
+            except Exception:
+                pass
+        self.call_from_thread(update)
+
+# ── Main App ──────────────────────────────────────────────────
+class DocLabTUI(App):
+    CSS      = CSS
+    TITLE    = "cyfoxgen DocLab"
+    BINDINGS = [
+        Binding("s", "stop",    "Stop",    show=True),
+        Binding("r", "refresh", "Refresh", show=True),
+        Binding("q", "quit",    "Quit",    show=True),
+    ]
+
+    _containers: list = []
+
+    def compose(self) -> ComposeResult:
+        yield Header(show_clock=True)
+        yield Static(self._banner(), id="logo")
+        yield Static("", id="statusbar")
+        with Horizontal(id="main"):
+            # Left — system log stream
+            with Container(id="logs-panel"):
+                yield RichLog(id="syslog", wrap=True,
+                              highlight=False, markup=True)
+            # Right — container cards (populated dynamically by _paint_containers)
+            with ScrollableContainer(id="containers-panel"):
+                pass
+        yield Footer()
+
+    def on_mount(self):
+        self.query_one("#logs-panel").border_title = "◉  SYSTEM LOGS"
+        self.query_one("#containers-panel").border_title = "● CONTAINERS"
+        self.set_interval(3, self._refresh)
+        self._refresh()
+
+    def _banner(self) -> str:
+        return (
+            "  ██████╗  ██████╗  ██████╗██╗      █████╗ ██████╗ \n"
+            "  ██╔══██╗██╔═══██╗██╔════╝██║     ██╔══██╗██╔══██╗\n"
+            "  ██║  ██║██║   ██║██║     ██║     ███████║██████╔╝\n"
+            "  ██║  ██║██║   ██║██║     ██║     ██╔══██║██╔══██╗\n"
+            "  ██████╔╝╚██████╔╝╚██████╗███████╗██║  ██║██████╔╝\n"
+            "  ╚═════╝  ╚═════╝  ╚═════╝╚══════╝╚═╝  ╚═╝╚═════╝ \n"
+            "        D O C K E R   L A B   M A N A G E R   v2.0  "
+        )
+
+    # ── Data refresh ─────────────────────────────────────────
+    def _refresh(self):
+        self._fetch_syslogs()
+        self._fetch_containers()
+
+    @work(thread=True)
+    def _fetch_syslogs(self):
+        resp = api("GET", "/system-logs")
+        logs = resp.get("logs", []) if resp else []
+        self.call_from_thread(self._paint_syslogs, logs)
+
+    def _paint_syslogs(self, logs):
+        colors = {
+            "info":       "green",
+            "warning":    "yellow",
+            "error":      "red",
+            "deployment": "cyan",
+        }
+        rlog = self.query_one("#syslog", RichLog)
+        rlog.clear()
+        for l in logs[-60:]:
+            col = colors.get(l.get("type", "info"), "green")
+            ts  = l.get("timestamp", "")
+            msg = l.get("message", "")
+            rlog.write(f"[dim][{ts}][/dim] [{col}]{msg}[/{col}]")
+        rlog.scroll_end(animate=False)
+
+    @work(thread=True)
+    def _fetch_containers(self):
+        resp = api("GET", "/containers")
+        cs   = []
+        if resp and "containers" in resp:
+            cs = [c for c in resp["containers"]
+                  if "lab-manager" not in c.get("name", "")]
+        self.call_from_thread(self._paint_containers, cs)
+
+    def _paint_containers(self, cs):
+        self._containers = cs
+
+        # Status bar
+        now = time.strftime("%H:%M:%S")
+        self.query_one("#statusbar", Static).update(
+            f"  PID: {API_PID}   KEY: {PASS}   {now}"
+            f"   {len(cs)} container(s) active"
+        )
+
+        # Container panel title
+        self.query_one("#containers-panel").border_title = \
+            f"● CONTAINERS  ({len(cs)})"
+
+        # Rebuild cards
+        panel = self.query_one("#containers-panel", ScrollableContainer)
+        panel.remove_children()
+
+        if not cs:
+            panel.mount(Label(
+                "  — no containers deployed yet —",
+                classes="empty-msg"
+            ))
+        else:
+            for c in cs:
+                panel.mount(ContainerCard(c))
+
+    # ── Actions ───────────────────────────────────────────────
+    def action_refresh(self):
+        self._refresh()
+
+    def action_quit(self):
+        if API_PID:
+            try: os.kill(int(API_PID), 15)
+            except Exception: pass
+        self.exit()
+
+    def action_stop(self):
+        cs = self._containers
+        if not cs:
+            self.notify("No containers to stop.", severity="warning")
+            return
+        # Stop the first running container (or let user pick via arrow keys in future)
+        # For now: if only one, stop it; if multiple, notify user to use number
+        running = [c for c in cs if c.get("status") == "running"]
+        if not running:
+            self.notify("No running containers.", severity="warning")
+            return
+        c = running[0] if len(running) == 1 else None
+        if not c:
+            self.notify(
+                f"{len(running)} containers running. Click a card then press S.",
+                severity="information",
+            )
+            return
+
+        def after(confirmed):
+            if confirmed:
+                self._do_stop(c)
+
+        self.push_screen(StopScreen(c), after)
+
+    @work(thread=True)
+    def _do_stop(self, c):
+        resp = api("DELETE", f"/containers/{c['id']}", {"password": PASS})
+        if resp and resp.get("success"):
+            self.call_from_thread(
+                self.notify,
+                f"✔ Removed: {c.get('name')}",
+                severity="information",
+            )
+        else:
+            err = resp.get("error", "?") if resp else "No response"
+            self.call_from_thread(
+                self.notify, f"✘ {err}",
+                title="Stop Failed", severity="error",
+            )
+        self.call_from_thread(self._refresh)
+
+if __name__ == "__main__":
+    DocLabTUI().run()
+TUIEOF
+
+log_ok "TUI written to $APP_DIR/tui.py"
+echo ""
+
+# ───────────────────────────── LAUNCH TUI ───────────────────
+log_step "Launching DocLab TUI..."
+echo ""
+python3 "$APP_DIR/tui.py" "$LAB_PASSWORD" "$APP_PID"
+
+log_ok "Session ended."
