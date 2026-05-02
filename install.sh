@@ -256,8 +256,8 @@ def add_log(msg, kind='info'):
         if len(system_logs) > 200:
             system_logs.pop(0)
 
-def gen_password(n=10):
-    return ''.join(random.choices(string.ascii_letters + string.digits, k=n))
+def gen_password(n=6):
+    return ''.join(random.choices(string.digits, k=n))
 
 API_PASSWORD = os.environ.get("LAB_PASSWORD") or gen_password()
 
@@ -600,6 +600,24 @@ Screen { background: #0a0a0a; }
     padding: 0 1;
 }
 
+.card-title-area {
+    width: 1fr;
+}
+
+.card-action-area {
+    width: auto;
+    padding-right: 1;
+}
+
+Button.stop-btn {
+    background: #330000;
+    color: #ff4444;
+    border: none;
+    height: 1;
+    min-width: 10;
+}
+Button.stop-btn:hover { background: #ff4444; color: white; }
+
 .card-name   { color: #00ffff; text-style: bold; }
 .card-ip     { color: #ffff00; }
 .card-image  { color: #555555; }
@@ -665,8 +683,9 @@ class ContainerCard(Static):
     """One card per container — shows status badge, IP, image, recent logs."""
 
     def __init__(self, cinfo: dict):
-        super().__init__()
+        super().__init__(id=f"card-{cinfo['id'][:12]}")
         self.cinfo = cinfo
+        self._last_logs = []
         status = cinfo.get("status", "unknown")
         self.add_class("ccard")
         self.add_class("running" if status == "running" else "exited")
@@ -679,12 +698,17 @@ class ContainerCard(Static):
             else Text(f" ■ {status.upper()} ", style="bold white on #ff4444")
 
         with Horizontal(classes="card-header"):
-            yield Label(Text.assemble(
-                Text("📦 ", style=""),
-                Text(c.get("name", "?"), style="bold cyan"),
-                Text("  "),
-                badge,
-            ), classes="card-name")
+            with Horizontal(classes="card-title-area"):
+                yield Label(Text.assemble(
+                    Text("📦 ", style=""),
+                    Text(c.get("name", "?"), style="bold cyan"),
+                    Text("  "),
+                    badge,
+                ), classes="card-name")
+            
+            with Horizontal(classes="card-action-area"):
+                if is_run:
+                    yield Button("⏹ STOP", id=f"stop-{c['id'][:12]}", classes="stop-btn")
 
         yield Label(
             Text.assemble(
@@ -701,15 +725,20 @@ class ContainerCard(Static):
     def on_mount(self):
         self._load_logs()
 
-    @work(thread=True)
+    @work(thread=True, exclusive=True)
     def _load_logs(self):
         cid  = self.cinfo.get("id", "")
         resp = api("GET", f"/containers/{cid}/logs")
         raw  = (resp.get("logs", "") if resp else "") or ""
         lines = [l for l in raw.splitlines() if l.strip()][-15:]
+        if hasattr(self, "_last_logs") and self._last_logs == lines:
+            return
+        self._last_logs = lines
+
         def update():
             try:
                 rlog = self.query_one(f"#clog-{cid[:12]}", RichLog)
+                rlog.clear()
                 if not lines:
                     rlog.write("[dim]no logs yet[/dim]")
                 else:
@@ -718,7 +747,40 @@ class ContainerCard(Static):
                 rlog.scroll_end(animate=False)
             except Exception:
                 pass
-        self.call_from_thread(update)
+        self.app.call_from_thread(update)
+
+    def update_cinfo(self, cinfo: dict):
+        self.cinfo = cinfo
+        status = cinfo.get("status", "?")
+        is_run = status == "running"
+        self.remove_class("running", "exited")
+        self.add_class("running" if is_run else "exited")
+        
+        badge  = Text(" ▶ RUNNING ", style="bold black on #00ff41") if is_run \
+            else Text(f" ■ {status.upper()} ", style="bold white on #ff4444")
+            
+        self.query_one(".card-name", Label).update(Text.assemble(
+            Text("📦 ", style=""),
+            Text(cinfo.get("name", "?"), style="bold cyan"),
+            Text("  "),
+            badge,
+        ))
+        
+        # Add or remove Stop button based on status
+        action_area = self.query_one(".card-action-area")
+        has_btn = len(action_area.children) > 0
+        if is_run and not has_btn:
+            action_area.mount(Button("⏹ STOP", id=f"stop-{cinfo['id'][:12]}", classes="stop-btn"))
+        elif not is_run and has_btn:
+            action_area.children[0].remove()
+            
+        self._load_logs()
+
+    @on(Button.Pressed)
+    def on_stop_pressed(self, event: Button.Pressed):
+        btn_id = event.button.id
+        if btn_id and btn_id.startswith("stop-"):
+            self.app.push_screen(StopScreen(self.cinfo), self.app._after_stop_modal)
 
 # ── Main App ──────────────────────────────────────────────────
 class DocLabTUI(App):
@@ -728,9 +790,11 @@ class DocLabTUI(App):
         Binding("s", "stop",    "Stop",    show=True),
         Binding("r", "refresh", "Refresh", show=True),
         Binding("q", "quit",    "Quit",    show=True),
+        Binding("ctrl+c", "quit", "Quit", show=False),
     ]
 
     _containers: list = []
+    _last_syslogs = []
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -768,13 +832,17 @@ class DocLabTUI(App):
         self._fetch_syslogs()
         self._fetch_containers()
 
-    @work(thread=True)
+    @work(thread=True, exclusive=True)
     def _fetch_syslogs(self):
         resp = api("GET", "/system-logs")
         logs = resp.get("logs", []) if resp else []
         self.call_from_thread(self._paint_syslogs, logs)
 
     def _paint_syslogs(self, logs):
+        if self._last_syslogs == logs:
+            return
+        self._last_syslogs = logs
+        
         colors = {
             "info":       "green",
             "warning":    "yellow",
@@ -790,7 +858,7 @@ class DocLabTUI(App):
             rlog.write(f"[dim][{ts}][/dim] [{col}]{msg}[/{col}]")
         rlog.scroll_end(animate=False)
 
-    @work(thread=True)
+    @work(thread=True, exclusive=True)
     def _fetch_containers(self):
         resp = api("GET", "/containers")
         cs   = []
@@ -802,11 +870,10 @@ class DocLabTUI(App):
     def _paint_containers(self, cs):
         self._containers = cs
 
-        # Status bar
-        now = time.strftime("%H:%M:%S")
+        # Status bar - only update if container count changed to avoid redraws
         self.query_one("#statusbar", Static).update(
-            f"  PID: {API_PID}   KEY: {PASS}   {now}"
-            f"   {len(cs)} container(s) active"
+            f"  PID: {API_PID}   KEY: {PASS} "
+            f"  |  {len(cs)} active   (Hold SHIFT to select/copy text)"
         )
 
         # Container panel title
@@ -815,16 +882,39 @@ class DocLabTUI(App):
 
         # Rebuild cards
         panel = self.query_one("#containers-panel", ScrollableContainer)
-        panel.remove_children()
 
         if not cs:
-            panel.mount(Label(
-                "  — no containers deployed yet —",
-                classes="empty-msg"
-            ))
-        else:
-            for c in cs:
+            # Remove all cards if any
+            for child in list(panel.children):
+                if child.id and child.id.startswith("card-"):
+                    child.remove()
+            if not panel.query(".empty-msg"):
+                panel.mount(Label(
+                    "  — no containers deployed yet —",
+                    classes="empty-msg"
+                ))
+            return
+
+        # Remove empty message if we have containers
+        for empty in panel.query(".empty-msg"):
+            empty.remove()
+
+        # Keep track of current container IDs
+        current_ids = [f"card-{c['id'][:12]}" for c in cs]
+        
+        # Remove cards for containers that are gone
+        for child in list(panel.children):
+            if child.id and child.id.startswith("card-") and child.id not in current_ids:
+                child.remove()
+
+        # Mount new cards or update existing ones
+        for c in cs:
+            card_id = f"card-{c['id'][:12]}"
+            if not panel.query(f"#{card_id}"):
                 panel.mount(ContainerCard(c))
+            else:
+                card = panel.query_one(f"#{card_id}", ContainerCard)
+                card.update_cinfo(c)
 
     # ── Actions ───────────────────────────────────────────────
     def action_refresh(self):
@@ -850,16 +940,23 @@ class DocLabTUI(App):
         c = running[0] if len(running) == 1 else None
         if not c:
             self.notify(
-                f"{len(running)} containers running. Click a card then press S.",
+                f"{len(running)} containers running. Click the STOP button on a container card.",
                 severity="information",
             )
             return
 
-        def after(confirmed):
-            if confirmed:
-                self._do_stop(c)
+        self.push_screen(StopScreen(c), self._after_stop_modal)
 
-        self.push_screen(StopScreen(c), after)
+    def _after_stop_modal(self, confirmed):
+        if confirmed and hasattr(self, "_stop_target"):
+            self._do_stop(self._stop_target)
+
+    # Allow ContainerCard button to trigger the stop cleanly
+    def push_screen(self, screen, callback):
+        # Hijack callback to inject target if coming from card
+        if isinstance(screen, StopScreen):
+            self._stop_target = screen.cinfo
+        super().push_screen(screen, callback)
 
     @work(thread=True)
     def _do_stop(self, c):
