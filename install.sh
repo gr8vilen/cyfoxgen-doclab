@@ -606,12 +606,11 @@ CSS = """
 Screen {
     background: #080f08;
     layers: base overlay;
-    cursor: default;
 }
 
 #top-spacer {
     height: 2;
-    background: transparent;
+    background: #080f08;
 }
 
 /* ── Top header bar ───────────────────────────────────────────────── */
@@ -843,9 +842,10 @@ class HACKLABTUI(App):
 
     _containers:    list  = []
     _selected_idx:  int   = 0
-    _syslog_visible: bool = True  # Start with logs visible
+    _syslog_visible: bool = True
     _tick:          int   = 0
-    _last_activity: str   = "Starting..."
+    _last_activity: str   = "Ready"
+    ENABLE_BELL:    bool  = False
 
     # ── Compose ─────────────────────────────────────────────────────────────
     def compose(self) -> ComposeResult:
@@ -911,8 +911,16 @@ class HACKLABTUI(App):
         self._do_refresh()
 
     def action_refresh(self) -> None:
+        self._set_activity("↻ Refreshed")
         self._do_refresh()
-        # self.notify("Refreshed", severity="information", timeout=1)
+
+    def _set_activity(self, msg: str) -> None:
+        """Thread-safe activity update."""
+        self._last_activity = msg
+
+    def on_key(self, event) -> None:
+        """Suppress terminal bell for any unhandled key."""
+        event.stop()
 
     @work(thread=True)
     def _do_refresh(self) -> None:
@@ -1106,10 +1114,10 @@ class HACKLABTUI(App):
     def _do_stop(self, c: dict) -> None:
         resp = api("DELETE", f"/containers/{c['id']}", {"password": PASS})
         if resp and resp.get("success"):
-            self._last_activity = f"✅ Stopped: {c.get('name')}"
+            self.call_from_thread(self._set_activity, f"✅ Stopped: {c.get('name')}")
         else:
             err = (resp.get("error", "?") if resp else "no response")
-            self._last_activity = f"❌ Stop failed: {err}"
+            self.call_from_thread(self._set_activity, f"❌ Stop failed: {err}")
         self._do_refresh()
 
     # ── Toggle syslog ────────────────────────────────────────────────────────
@@ -1123,7 +1131,7 @@ class HACKLABTUI(App):
 
     # ── Help ─────────────────────────────────────────────────────────────────
     def action_show_help(self) -> None:
-        self._last_activity = "Help: Q=Quit R=Refresh S=Stop L=Logs H=Help ↑/↓=Nav"
+        self._set_activity("Keys: Q=Quit  R=Refresh  S=Stop  L=Logs  H=Help  ↑↓/JK=Navigate")
 
     # ── Quit ─────────────────────────────────────────────────────────────────
     def action_quit(self) -> None:
