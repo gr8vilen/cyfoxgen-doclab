@@ -38,7 +38,7 @@ cat << 'EOF'
 | | ||| |\ |||  \  | / \|
 | \_/|| | \|||  /_ | \_/|
 \____/\_/  \|\____\\____/
-HACKLAB DOC v6.1
+HACKLAB DOC v6.2
 EOF
 echo -e "${N}"
 separator
@@ -554,602 +554,156 @@ log_ok "Server running (PID $APP_PID)"
 echo ""
 
 # ───────────────────────────── WRITE TUI.PY ─────────────────
-log_step "Writing Textual TUI app..."
+log_step "Writing dashboard app..."
 
 cat > "$APP_DIR/tui.py" << 'TUIEOF'
 #!/usr/bin/env python3
-"""
-uneo HACKLAB — Textual TUI v4
-Responsive split-pane layout with live logs, status badges, and animated header.
-Keys: q=quit  r=refresh  s=stop selected  d=deploy  up/down=navigate
-"""
-import sys
-import os
-import json
-import time
-import threading
-import urllib.request
+# uneo HACKLAB -- Display-only dashboard
+# No keyboard, no mouse, no bells. Ctrl+C to exit.
+import sys, os, json, time, signal, urllib.request
 from datetime import datetime
 
-PASS    = sys.argv[1] if len(sys.argv) > 1 else ""
-API_PID = sys.argv[2] if len(sys.argv) > 2 else ""
-API     = "http://localhost:62111"
+PASS     = sys.argv[1] if len(sys.argv) > 1 else ""
+API_PID  = sys.argv[2] if len(sys.argv) > 2 else ""
+API      = "http://localhost:62111"
+INTERVAL = 3
 
-def api(method, path, body=None):
+CLEAR       = "\x1b[2J\x1b[H"
+HIDE_CURSOR = "\x1b[?25l"
+SHOW_CURSOR = "\x1b[?25h"
+
+def col(c): return f"\x1b[{c}m"
+RESET = col(0); BOLD = col(1); DIM = col(2)
+GREEN = col(92); DKGRN = col(32); RED = col(91)
+YELLOW = col(93); CYAN = col(96); WHITE = col(97); GREY = col(90)
+
+def hline(ch="\u2500", w=80):
+    return DKGRN + ch * w + RESET
+
+def api_call(method, path, body=None):
     try:
         data = json.dumps(body).encode() if body else None
         req  = urllib.request.Request(
             f"{API}{path}", data=data, method=method,
             headers={"Content-Type": "application/json"} if data else {}
         )
-        with urllib.request.urlopen(req, timeout=5) as r:
+        with urllib.request.urlopen(req, timeout=4) as r:
             return json.loads(r.read())
     except Exception:
         return None
 
-# ── Textual imports ────────────────────────────────────────────────────────────
-from textual.app        import App, ComposeResult
-from textual.widgets    import Footer, Header, Static, ListView, ListItem, Label, RichLog
-from textual.containers import Horizontal, Vertical, ScrollableContainer
-from textual.binding    import Binding
-from textual.reactive   import reactive
-from textual            import work, on
-from textual.color      import Color
-from rich.text          import Text
-from rich.style         import Style
-from rich.panel         import Panel
-from rich               import box
+def draw(tick):
+    try:
+        cols = os.get_terminal_size().columns
+    except Exception:
+        cols = 80
 
-# ── Stylesheet ─────────────────────────────────────────────────────────────────
-CSS = """
-/* ── Root ─────────────────────────────────────────────────────────── */
-Screen {
-    background: #080f08;
-    layers: base overlay;
-}
+    containers = []
+    slogs = []
 
-#top-spacer {
-    height: 2;
-    background: #080f08;
-}
+    resp = api_call("GET", "/containers")
+    if resp and "containers" in resp:
+        containers = [c for c in resp["containers"]
+                      if "lab-manager" not in c.get("name", "")]
 
-/* ── Top header bar ───────────────────────────────────────────────── */
-#header-bar {
-    height: 3;
-    background: #000000;
-    border-bottom: tall #1aff6e;
-    content-align: left middle;
-    padding: 0 2;
-    color: #1aff6e;
-    text-style: bold;
-}
+    sr = api_call("GET", "/system-logs")
+    if sr:
+        slogs = sr.get("logs", [])
 
-/* ── Stats strip ──────────────────────────────────────────────────── */
-#stats-bar {
-    height: 1;
-    background: #0a180a;
-    border-bottom: solid #0d3a0d;
-    content-align: left middle;
-    padding: 0 2;
-    color: #2d9e2d;
-}
+    now     = datetime.now().strftime("%H:%M:%S")
+    running = sum(1 for c in containers if c.get("status") == "running")
+    pulse   = ("\u25c9", "\u25ce", "\u25c9", "\u25cb")[tick % 4] if running > 0 else "\u25cb"
 
-/* ── Main body split ──────────────────────────────────────────────── */
-#body {
-    height: 1fr;
-    margin-top: 0;
-}
+    out = ["\n\n"]
 
-/* ── Left pane: container list ────────────────────────────────────── */
-#left-pane {
-    width: 36;
-    min-width: 24;
-    background: #050d05;
-    border-right: tall #0d3a0d;
-    overflow-y: auto;
-}
+    # Header
+    out.append(
+        f"{GREEN}{BOLD}  \u2591\u2592\u2593  UNEO HACKLAB \u2593\u2592\u2591{RESET}"
+        f"   {GREEN}{pulse} LIVE{RESET}"
+        f"  {DIM}\u2502{RESET}  KEY: {CYAN}{BOLD}{PASS}{RESET}"
+        f"  {DIM}\u2502{RESET}  PID: {GREY}{API_PID}{RESET}"
+        f"  {DIM}\u2502{RESET}  {WHITE}{now}{RESET}"
+    )
+    out.append(hline("\u2500", cols))
 
-#pane-title-left {
-    height: 2;
-    background: #0a1a0a;
-    border-bottom: solid #0d3a0d;
-    content-align: left middle;
-    padding: 0 2;
-    color: #1aff6e;
-    text-style: bold;
-}
+    # Stats
+    last_msg = slogs[-1].get("message", "No activity") if slogs else "No activity"
+    out.append(
+        f"  {GREEN}\u25b6{RESET} Running: {GREEN}{running}/{len(containers)}{RESET}"
+        f"   {GREEN}\u25b6{RESET} {DIM}{last_msg[:cols-30]}{RESET}"
+    )
+    out.append(hline("\u2500", cols))
 
-/* ── Container list items ─────────────────────────────────────────── */
-.c-item {
-    height: 5;
-    padding: 0 1;
-    border-bottom: solid #0a1a0a;
-    background: #050d05;
-}
+    # Containers
+    if not containers:
+        out.append(f"\n  {DIM}No active containers.{RESET}\n")
+    else:
+        for i, c in enumerate(containers):
+            status = c.get("status", "?")
+            name   = c.get("name",   "?")
+            image  = c.get("image",  "?")
+            ip     = c.get("ip",     "?")
+            ports  = ", ".join(c.get("ports", [])) or "none"
+            cid    = c.get("id", "?")[:12]
+            age_s  = int(time.time() - c.get("created", time.time()))
+            age    = f"{age_s//3600}h{(age_s%3600)//60}m{age_s%60}s"
+            short  = (image.split("/")[-1] if "/" in image else image)[:28]
 
-.c-item:hover {
-    background: #0a1e0a;
-}
-
-.c-item.-selected {
-    background: #0d2e0d;
-    border-left: thick #1aff6e;
-}
-
-.c-item.running {
-    border-left: thick #1aff6e;
-}
-
-.c-item.exited {
-    border-left: thick #8b0000;
-}
-
-.c-item.paused {
-    border-left: thick #b8860b;
-}
-
-/* ── Right pane: details + logs ───────────────────────────────────── */
-#right-pane {
-    width: 1fr;
-    background: #050d05;
-}
-
-/* ── Detail panel (top-right) ─────────────────────────────────────── */
-#detail-panel {
-    height: 10;
-    background: #060e06;
-    border-bottom: tall #0d3a0d;
-    padding: 1 2;
-    overflow: hidden;
-}
-
-#pane-title-detail {
-    height: 2;
-    background: #0a1a0a;
-    border-bottom: solid #0d3a0d;
-    content-align: left middle;
-    padding: 0 2;
-    color: #7fff7f;
-    text-style: bold;
-}
-
-/* ── Logs panel (bottom-right) ────────────────────────────────────── */
-#pane-title-logs {
-    height: 2;
-    background: #0a1a0a;
-    border-bottom: solid #0d3a0d;
-    content-align: left middle;
-    padding: 0 2;
-    color: #2d9e2d;
-    text-style: bold;
-}
-
-#log-view {
-    height: 1fr;
-    background: #030803;
-    padding: 0 1;
-    overflow-y: auto;
-    scrollbar-color: #1aff6e #0a1a0a;
-    scrollbar-background: #0a1a0a;
-    scrollbar-corner-color: #0a1a0a;
-}
-
-/* ── Empty state ──────────────────────────────────────────────────── */
-#empty-state {
-    height: 1fr;
-    content-align: center middle;
-    color: #1a3a1a;
-    text-style: italic;
-}
-
-/* ── System log panel (full width, collapsible) ────────────────────── */
-#syslog-panel {
-    height: 8;
-    background: #030803;
-    border-top: tall #0a2a0a;
-    dock: bottom;
-    display: block; /* Visible by default */
-}
-
-#syslog-panel.visible {
-    display: block;
-}
-
-#syslog-view {
-    height: 1fr;
-    padding: 0 2;
-    overflow-y: auto;
-}
-
-/* ── Footer ───────────────────────────────────────────────────────── */
-Footer {
-    background: #000000;
-    color: #1aff6e;
-    border-top: tall #0d3a0d;
-}
-
-Footer > .footer--key {
-    background: #0d3a0d;
-    color: #1aff6e;
-}
-
-Footer > .footer--highlight {
-    background: #1aff6e;
-    color: #000000;
-}
-"""
-
-# ── Container list item widget ─────────────────────────────────────────────────
-class ContainerItem(Static):
-    """A single row in the container list."""
-
-    def __init__(self, cinfo: dict) -> None:
-        super().__init__()
-        self.cinfo = cinfo
-        self._cid  = cinfo["id"]
-        self._cid12 = cinfo["id"][:12]
-
-    def render(self) -> Text:
-        c      = self.cinfo
-        status = c.get("status", "unknown")
-        name   = c.get("name", "?")
-        image  = c.get("image", "?")
-        ip     = c.get("ip", "?")
-
-        if status == "running":
-            badge_style = Style(color="#1aff6e", bold=True)
-            badge = "● RUNNING"
-            name_style = Style(color="#ccffcc", bold=True)
-        elif status == "exited":
-            badge_style = Style(color="#ff4444")
-            badge = "✕ EXITED "
-            name_style = Style(color="#886666")
-        else:
-            badge_style = Style(color="#ffcc00")
-            badge = "◌ " + status.upper()[:7]
-            name_style = Style(color="#aaaa77")
-
-        t = Text()
-        t.append(f" {badge}", style=badge_style)
-        t.append("\n")
-        t.append(f" {name[:28]}", style=name_style)
-        t.append("\n")
-        short_img = image.split("/")[-1][:26] if "/" in image else image[:26]
-        t.append(f" {short_img}", style=Style(color="#336633", italic=True))
-        t.append("\n")
-        t.append(f" {ip}", style=Style(color="#1a6e1a"))
-        return t
-
-    def update_info(self, cinfo: dict) -> None:
-        self.cinfo = cinfo
-        self.refresh()
-
-# ── Main TUI App ───────────────────────────────────────────────────────────────
-class HACKLABTUI(App):
-    CSS      = CSS
-    TITLE    = "uneo HACKLAB"
-    BINDINGS = [
-        Binding("q",          "quit",       "Quit",       show=True,  priority=True),
-        Binding("r",          "refresh",    "Refresh",    show=True),
-        Binding("s",          "stop",       "Stop",       show=True),
-        Binding("l",          "toggle_log", "Logs",       show=True),
-        Binding("h",          "show_help",  "Help",       show=True),
-        Binding("up",         "cursor_up",  "Up",         show=False),
-        Binding("down",       "cursor_down","Down",       show=False),
-        Binding("k",          "cursor_up",  "Up",         show=False),
-        Binding("j",          "cursor_down","Down",       show=False),
-    ]
-
-    _containers:    list  = []
-    _selected_idx:  int   = 0
-    _syslog_visible: bool = True
-    _tick:          int   = 0
-    _last_activity: str   = "Ready"
-
-    # ── Compose ─────────────────────────────────────────────────────────────
-    def compose(self) -> ComposeResult:
-        yield Static("\n", id="top-spacer")
-        yield Static(
-            f"  uneo HACKLAB  |  KEY: {PASS}  |  PID: {API_PID}",
-            id="header-bar"
-        )
-        yield Static("", id="stats-bar")
-        with Horizontal(id="body"):
-            # Left: container list
-            with Vertical(id="left-pane"):
-                yield Static("  CONTAINERS", id="pane-title-left")
-                yield Static(
-                    "\n\n  [bold #1aff6e]No active containers.[/]\n\n",
-                    id="empty-state"
-                )
-            # Right: detail + logs
-            with Vertical(id="right-pane"):
-                yield Static("  SELECT A CONTAINER", id="pane-title-detail")
-                yield Static(
-                    "\n  ← Select a container from the left panel.",
-                    id="detail-panel"
-                )
-                yield Static("  STDOUT / STDERR", id="pane-title-logs")
-                yield RichLog(id="log-view", highlight=True, markup=False, wrap=True)
-        # Syslog drawer (hidden by default)
-        with Vertical(id="syslog-panel"):
-            yield Static("  ▲ SYSTEM LOGS  [L] to toggle", id="pane-title-syslog")
-            yield RichLog(id="syslog-view", highlight=False, markup=False, wrap=True)
-        yield Footer()
-
-    # ── Mount ─────────────────────────────────────────────────────────────────
-    def on_mount(self) -> None:
-        self._update_header()
-        self.set_interval(4, self._scheduled_refresh)
-        self.set_interval(1, self._update_header)
-        self._do_refresh()
-
-    # ── Silence all mouse events (keyboard-only TUI) ────────────────────────
-    def on_mouse_move(self, event) -> None:        event.stop()
-    def on_mouse_down(self, event) -> None:        event.stop()
-    def on_mouse_up(self, event) -> None:          event.stop()
-    def on_scroll_up(self, event) -> None:         event.stop()
-    def on_scroll_down(self, event) -> None:       event.stop()
-
-    # ── Header / stats ───────────────────────────────────────────────────────
-    def _update_header(self) -> None:
-        self._tick += 1
-        now = datetime.now().strftime("%H:%M:%S")
-        running = sum(1 for c in self._containers if c.get("status") == "running")
-        total   = len(self._containers)
-
-        # Animated pulse dot
-        pulse = ("◉", "◎", "◉", "○")[self._tick % 4] if running > 0 else "○"
-
-        self.query_one("#header-bar", Static).update(
-            f"  ░▒▓  UNEO HACKLAB ▓▒░   {pulse} LIVE   "
-            f"│  KEY: {PASS}  │  PID: {API_PID}  │  {now}"
-        )
-        self.query_one("#stats-bar", Static).update(
-            f"  [#1aff6e]▶[/] Running: {running}/{total}  "
-            f" [#1aff6e]▶[/] Selected: {self._containers[self._selected_idx]['name'] if self._containers else '—'}  "
-            f" [#1aff6e]▶[/] Last Activity: {self._last_activity}"
-        )
-
-    # ── Scheduled & manual refresh ───────────────────────────────────────────
-    def _scheduled_refresh(self) -> None:
-        self._do_refresh()
-
-    def action_refresh(self) -> None:
-        self._set_activity("↻ Refreshed")
-        self._do_refresh()
-
-    def _set_activity(self, msg: str) -> None:
-        """Thread-safe activity update."""
-        self._last_activity = msg
-
-    def bell(self) -> None:
-        """Override to silence the terminal bell / knock sound on macOS."""
-        pass  # Do nothing — no \a escape, no sound
-
-    @work(thread=True)
-    def _do_refresh(self) -> None:
-        resp = api("GET", "/containers")
-        cs   = []
-        if resp and "containers" in resp:
-            cs = [c for c in resp["containers"]
-                  if "lab-manager" not in c.get("name", "")]
-
-        # Fetch logs for selected container
-        logs_text = ""
-        if cs and self._selected_idx < len(cs):
-            sel = cs[self._selected_idx]
-            r   = api("GET", f"/containers/{sel['id']}/logs")
-            if r:
-                logs_text = r.get("logs", "")
-
-        # Fetch system logs
-        slogs = []
-        sr = api("GET", "/system-logs")
-        if sr:
-            slogs = sr.get("logs", [])
-        
-        self.call_from_thread(self._redraw, cs, logs_text, slogs)
-
-    def _redraw(self, cs: list, logs_text: str, slogs: list) -> None:
-        self._containers = cs
-        left = self.query_one("#left-pane", Vertical)
-        empty = self.query_one("#empty-state", Static)
-
-        if not cs:
-            empty.display = True
-            # Remove all container items
-            for w in list(left.query(ContainerItem)):
-                w.remove()
-            self._clear_detail()
-            return
-
-        empty.display = False
-
-        # Sync container items
-        existing = {w.id: w for w in left.query(ContainerItem)}
-        want_ids = {f"ci-{c['id'][:12]}" for c in cs}
-
-        # Remove stale
-        for wid, w in list(existing.items()):
-            if wid not in want_ids:
-                w.remove()
-
-        # Add or update
-        for i, c in enumerate(cs):
-            wid = f"ci-{c['id'][:12]}"
-            if wid in existing:
-                existing[wid].update_info(c)
-                # Update CSS class
-                w = existing[wid]
-                w.remove_class("running", "exited", "paused")
-                w.add_class(c.get("status", "unknown"))
-                w.remove_class("-selected")
-                if i == self._selected_idx:
-                    w.add_class("-selected")
+            if status == "running":
+                badge, nc = f"{GREEN}\u25cf RUNNING{RESET}", GREEN
+            elif status == "exited":
+                badge, nc = f"{RED}\u2715 EXITED {RESET}", RED
             else:
-                item = ContainerItem(c)
-                item.id = wid
-                item.add_class("c-item")
-                item.add_class(c.get("status", "unknown"))
-                if i == self._selected_idx:
-                    item.add_class("-selected")
-                left.mount(item)
+                badge, nc = f"{YELLOW}\u25cc {status.upper()[:7]}{RESET}", YELLOW
 
-        # Clamp selection
-        if self._selected_idx >= len(cs):
-            self._selected_idx = max(0, len(cs) - 1)
-
-        # Update detail pane
-        self._update_detail(cs[self._selected_idx] if cs else None)
-
-        # Update log pane
-        log_widget = self.query_one("#log-view", RichLog)
-        log_widget.clear()
-        lines = [l for l in logs_text.splitlines() if l.strip()][-60:]
-        for line in lines:
-            log_widget.write(line)
-        if not lines:
-            log_widget.write("— no output yet —")
-
-        # Update syslog
-        syslog_widget = self.query_one("#syslog-view", RichLog)
-        syslog_widget.clear()
-        last_msg = "No activity"
-        for entry in slogs[-30:]:
-            ts   = entry.get("timestamp", "")
-            msg  = entry.get("message", "")
-            kind = entry.get("type", "info")
-            last_msg = msg
-            color = {
-                "error":      "#ff4444",
-                "warning":    "#ffcc00",
-                "deployment": "#1aff6e",
-                "info":       "#2d9e2d",
-            }.get(kind, "#2d9e2d")
-            syslog_widget.write(
-                Text.assemble(
-                    (f"[{ts}] ", Style(color="#1a6e1a")),
-                    (msg, Style(color=color)),
-                )
+            out.append(f"  {badge}  {nc}{BOLD}{name}{RESET}  {DIM}{short}{RESET}")
+            out.append(
+                f"  {DKGRN}IP:{RESET} {GREEN}{ip}{RESET}"
+                f"  {DKGRN}ID:{RESET} {DIM}{cid}...{RESET}"
+                f"  {DKGRN}Ports:{RESET} {ports}"
+                f"  {DKGRN}Up:{RESET} {age}"
             )
+            if i < len(containers) - 1:
+                out.append(hline("\u2504", cols))
 
-        # Update stats bar with latest activity
-        if slogs:
-            self._last_activity = slogs[-1].get("message", "No activity")
+    out.append(hline("\u2500", cols))
 
-    def _update_detail(self, c) -> None:
-        detail  = self.query_one("#detail-panel", Static)
-        title_w = self.query_one("#pane-title-detail", Static)
-        log_w   = self.query_one("#pane-title-logs", Static)
+    # System logs
+    out.append(f"  {BOLD}{DKGRN}SYSTEM LOGS{RESET}")
+    log_colors = {"error": RED, "warning": YELLOW, "deployment": GREEN, "info": DKGRN}
+    for entry in slogs[-8:]:
+        ts   = entry.get("timestamp", "")
+        msg  = entry.get("message",   "")
+        kind = entry.get("type",      "info")
+        c    = log_colors.get(kind, DKGRN)
+        out.append(f"  {DIM}[{ts}]{RESET} {c}{msg[:cols-16]}{RESET}")
 
-        if c is None:
-            detail.update("  ← Select a container.")
-            title_w.update("  CONTAINER DETAIL")
-            log_w.update("  LOGS")
-            return
+    out.append(hline("\u2500", cols))
+    out.append(f"  {DIM}Refreshes every {INTERVAL}s  \u00b7  Ctrl+C to exit{RESET}")
 
-        status  = c.get("status", "?")
-        name    = c.get("name", "?")
-        image   = c.get("image", "?")
-        ip      = c.get("ip", "?")
-        cid     = c.get("id", "?")[:16]
-        ports   = ", ".join(c.get("ports", [])) or "none"
-        created = c.get("created", 0)
-        age_s   = int(time.time() - created) if created else 0
-        age     = f"{age_s//3600}h {(age_s%3600)//60}m {age_s%60}s"
+    sys.stdout.write(CLEAR + "\n".join(out) + "\n")
+    sys.stdout.flush()
 
-        if status == "running":
-            status_line = Text.assemble(("● RUNNING", Style(color="#1aff6e", bold=True)))
-            title_w.update(f"  ◉ {name.upper()}")
-        else:
-            status_line = Text.assemble(("✕ " + status.upper(), Style(color="#ff4444", bold=True)))
-            title_w.update(f"  ✕ {name.upper()}")
+def main():
+    sys.stdout.write(HIDE_CURSOR + "\x1b[?1003l\x1b[?1002l\x1b[?1001l\x1b[?1000l")
+    sys.stdout.flush()
 
-        log_w.update(f"  LOGS — {name}")
+    def cleanup(sig=None, frame=None):
+        sys.stdout.write(SHOW_CURSOR + "\n")
+        sys.stdout.flush()
+        sys.exit(0)
 
-        t = Text()
-        t.append(" Status  : ", style=Style(color="#2d9e2d"))
-        t.append_text(status_line)
-        t.append("\n Name    : ", style=Style(color="#2d9e2d"))
-        t.append(name, style=Style(color="#ccffcc", bold=True))
-        t.append("\n Image   : ", style=Style(color="#2d9e2d"))
-        t.append(image, style=Style(color="#7fff7f", italic=True))
-        t.append("\n IP      : ", style=Style(color="#2d9e2d"))
-        t.append(ip, style=Style(color="#1aff6e"))
-        t.append("\n ID      : ", style=Style(color="#2d9e2d"))
-        t.append(cid + "...", style=Style(color="#336633"))
-        t.append("\n Ports   : ", style=Style(color="#2d9e2d"))
-        t.append(ports, style=Style(color="#669966"))
-        t.append("\n Uptime  : ", style=Style(color="#2d9e2d"))
-        t.append(age, style=Style(color="#669966"))
-        detail.update(t)
+    signal.signal(signal.SIGINT,  cleanup)
+    signal.signal(signal.SIGTERM, cleanup)
 
-    def _clear_detail(self) -> None:
-        self.query_one("#detail-panel", Static).update(
-            "  No containers running."
-        )
-        self.query_one("#log-view", RichLog).clear()
-
-    # ── Cursor navigation ─────────────────────────────────────────────────────
-    def action_cursor_up(self) -> None:
-        if not self._containers:
-            return
-        self._selected_idx = max(0, self._selected_idx - 1)
-        self._do_refresh()
-
-    def action_cursor_down(self) -> None:
-        if not self._containers:
-            return
-        self._selected_idx = min(len(self._containers) - 1, self._selected_idx + 1)
-        self._do_refresh()
-
-    # ── Stop action ──────────────────────────────────────────────────────────
-    def action_stop(self) -> None:
-        if not self._containers:
-            return
-        c = self._containers[self._selected_idx]
-        if c.get("status") != "running":
-            self._last_activity = f"⚠️ {c['name']} is not running."
-            return
-        self._last_activity = f"⏳ Stopping {c.get('name')}…"
-        self._do_stop(c)
-
-    @work(thread=True)
-    def _do_stop(self, c: dict) -> None:
-        resp = api("DELETE", f"/containers/{c['id']}", {"password": PASS})
-        if resp and resp.get("success"):
-            self.call_from_thread(self._set_activity, f"✅ Stopped: {c.get('name')}")
-        else:
-            err = (resp.get("error", "?") if resp else "no response")
-            self.call_from_thread(self._set_activity, f"❌ Stop failed: {err}")
-        self._do_refresh()
-
-    # ── Toggle syslog ────────────────────────────────────────────────────────
-    def action_toggle_log(self) -> None:
-        self._syslog_visible = not self._syslog_visible
-        panel = self.query_one("#syslog-panel", Vertical)
-        if self._syslog_visible:
-            panel.add_class("visible")
-        else:
-            panel.remove_class("visible")
-
-    # ── Help ─────────────────────────────────────────────────────────────────
-    def action_show_help(self) -> None:
-        self._set_activity("Keys: Q=Quit  R=Refresh  S=Stop  L=Logs  H=Help  ↑↓/JK=Navigate")
-
-    # ── Quit ─────────────────────────────────────────────────────────────────
-    def action_quit(self) -> None:
-        if API_PID:
-            try:
-                os.kill(int(API_PID), 15)
-            except Exception:
-                pass
-        self.exit()
-
+    tick = 0
+    while True:
+        draw(tick)
+        tick += 1
+        time.sleep(INTERVAL)
 
 if __name__ == "__main__":
-    HACKLABTUI().run(mouse=False)
+    main()
 TUIEOF
 
 log_ok "TUI written to $APP_DIR/tui.py"
