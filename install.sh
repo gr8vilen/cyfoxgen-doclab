@@ -207,6 +207,16 @@ else
     log_warn "Starting Docker daemon..."
     if [[ "$OS" == "wsl" ]]; then
         sudo service docker start &>/dev/null || true
+    elif [[ "$OS" == "macos" ]]; then
+        if ! docker info &>/dev/null; then
+            open -a Docker
+            log_info "Opening Docker Desktop... Please wait for it to start."
+            for i in {1..30}; do
+                echo -ne "."
+                sleep 2
+                if docker info &>/dev/null; then echo ""; break; fi
+            done
+        fi
     else
         sudo systemctl enable docker &>/dev/null || true
         sudo systemctl start docker &>/dev/null || true
@@ -218,6 +228,11 @@ else
     fi
 
     if ! docker info &>/dev/null 2>&1; then
+        if [[ "$OS" == "macos" ]]; then
+            log_err "Docker is not responding. Please ensure Docker Desktop is running."
+            log_err "Check: Settings > Advanced > Allow the default Docker socket to be used"
+            exit 1
+        fi
         DOCKER_CMD="sudo docker"
         log_warn "Using 'sudo docker' for this session"
     else
@@ -260,7 +275,22 @@ CORS(app, origins="*", methods=["GET","POST","DELETE","OPTIONS"],
 logging.basicConfig(level=logging.WARNING)
 logger = logging.getLogger(__name__)
 
-client = docker.from_env()
+try:
+    client = docker.from_env()
+    client.ping()
+except Exception:
+    # Fallback for macOS socket paths
+    found = False
+    for path in [f"{os.path.expanduser('~')}/.docker/run/docker.sock", "/var/run/docker.sock"]:
+        if os.path.exists(path):
+            try:
+                client = docker.DockerClient(base_url=f"unix://{path}")
+                client.ping()
+                found = True
+                break
+            except: continue
+    if not found:
+        raise
 
 containers  = {}
 network_mgr = None
