@@ -38,7 +38,7 @@ cat << 'EOF'
 | | ||| |\ |||  \  | / \|
 | \_/|| | \|||  /_ | \_/|
 \____/\_/  \|\____\\____/
-HACKLAB DOC v6.2
+HACKLAB DOC v6.6
 EOF
 echo -e "${N}"
 separator
@@ -281,6 +281,26 @@ if [[ "$OS" == "macos" ]]; then
     sudo brew services restart chipmk/tap/docker-mac-net-connect >/dev/null 2>&1 || true
     sleep 2
     log_ok "Tunnel is active — container IPs (172.x.x.x) are directly routable"
+    echo ""
+fi
+
+# ── WSL: Enable direct container IP routing ──────────────────
+if [[ "$OS" == "wsl" ]]; then
+    log_step "Setting up direct container IP routing for Windows (WSL)..."
+    log_info "WSL requires a static route in Windows to access container IPs (172.20.x.x)."
+    
+    WSL_IP=$(ip addr show eth0 2>/dev/null | grep -oP 'inet \K[\d.]+' | head -n 1)
+    if [[ -z "$WSL_IP" ]] && command -v hostname >/dev/null; then
+        WSL_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+    fi
+    
+    if [[ -n "$WSL_IP" ]]; then
+        log_warn "A Windows UAC prompt may appear to update the routing table..."
+        powershell.exe -NoProfile -Command "Start-Process powershell -ArgumentList '-NoProfile -WindowStyle Hidden -Command \"route delete 172.20.0.0 MASK 255.255.0.0 2> \$null; route add 172.20.0.0 MASK 255.255.0.0 $WSL_IP\"' -Verb RunAs -Wait" >/dev/null 2>&1 || true
+        log_ok "Windows route updated for 172.20.x.x -> $WSL_IP"
+    else
+        log_err "Could not determine WSL IP for routing."
+    fi
     echo ""
 fi
 
