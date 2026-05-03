@@ -38,7 +38,7 @@ cat << 'EOF'
 | | ||| |\ |||  \  | / \|
 | \_/|| | \|||  /_ | \_/|
 \____/\_/  \|\____\\____/
-HACKLAB DOC v6.7
+HACKLAB DOC v6.8
 EOF
 echo -e "${N}"
 separator
@@ -287,7 +287,7 @@ fi
 # ── WSL: Enable direct container IP routing ──────────────────
 if [[ "$OS" == "wsl" ]]; then
     log_step "Setting up direct container IP routing for Windows (WSL)..."
-    log_info "WSL requires a static route in Windows to access container IPs (172.20.x.x)."
+    log_info "WSL requires a static route in Windows to access container IPs (172.x.x.x)."
     
     WSL_IP=$(ip addr show eth0 2>/dev/null | grep -oP 'inet \K[\d.]+' | head -n 1)
     if [[ -z "$WSL_IP" ]] && command -v hostname >/dev/null; then
@@ -296,8 +296,10 @@ if [[ "$OS" == "wsl" ]]; then
     
     if [[ -n "$WSL_IP" ]]; then
         log_warn "A Windows UAC prompt may appear to update the routing table..."
-        powershell.exe -NoProfile -Command "Start-Process powershell -ArgumentList '-NoProfile -WindowStyle Hidden -Command \"route delete 172.20.0.0 MASK 255.255.0.0 2> \$null; route add 172.20.0.0 MASK 255.255.0.0 $WSL_IP\"' -Verb RunAs -Wait" < /dev/null >/dev/null 2>&1 || true
-        log_ok "Windows route updated for 172.20.x.x -> $WSL_IP"
+        # Route the entire 172.16.0.0/12 private block (172.16.0.0 - 172.31.255.255) 
+        # This covers all standard Docker bridge networks (172.17, 172.18, 172.19, 172.20, etc.)
+        powershell.exe -NoProfile -Command "Start-Process powershell -ArgumentList '-NoProfile -WindowStyle Hidden -Command \"route delete 172.16.0.0 MASK 255.240.0.0 2> \$null; route add 172.16.0.0 MASK 255.240.0.0 $WSL_IP\"' -Verb RunAs -Wait" < /dev/null >/dev/null 2>&1 || true
+        log_ok "Windows route updated for all Docker networks (172.16.x.x - 172.31.x.x) -> $WSL_IP"
     else
         log_err "Could not determine WSL IP for routing."
     fi
