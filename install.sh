@@ -259,15 +259,12 @@ if [[ "$OS" == "macos" ]]; then
         log_ok "docker-mac-net-connect installed"
     fi
 
-    # Start the service (creates WireGuard tunnel to Docker's VM network)
-    if sudo brew services list 2>/dev/null | grep -q "docker-mac-net-connect.*started"; then
-        log_ok "docker-mac-net-connect tunnel already running"
-    else
-        log_warn "Starting tunnel (sudo required)..."
-        sudo brew services start chipmk/tap/docker-mac-net-connect 2>&1 | sed 's/^/  /' || true
-        sleep 2
-        log_ok "Tunnel started — container IPs (172.x.x.x) now directly routable"
-    fi
+    # Always restart the service to ensure the WireGuard tunnel binds 
+    # to the current Docker VM session (fixes silent drops when Mac sleeps)
+    log_warn "Ensuring tunnel connection is active (sudo required)..."
+    sudo brew services restart chipmk/tap/docker-mac-net-connect >/dev/null 2>&1 || true
+    sleep 2
+    log_ok "Tunnel is active — container IPs (172.x.x.x) are directly routable"
     echo ""
 fi
 
