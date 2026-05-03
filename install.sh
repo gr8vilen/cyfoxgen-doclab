@@ -38,7 +38,7 @@ cat << 'EOF'
 | | ||| |\ |||  \  | / \|
 | \_/|| | \|||  /_ | \_/|
 \____/\_/  \|\____\\____/
-HACKLAB DOC v6.8
+HACKLAB DOC v6.9
 EOF
 echo -e "${N}"
 separator
@@ -289,6 +289,11 @@ if [[ "$OS" == "wsl" ]]; then
     log_step "Setting up direct container IP routing for Windows (WSL)..."
     log_info "WSL requires a static route in Windows to access container IPs (172.x.x.x)."
     
+    # Allow traffic from Windows host (eth0) to bypass Docker's isolation rules
+    if command -v iptables &>/dev/null; then
+        sudo iptables -C DOCKER-USER -i eth0 -j ACCEPT 2>/dev/null || sudo iptables -I DOCKER-USER -i eth0 -j ACCEPT 2>/dev/null || true
+    fi
+
     WSL_IP=$(ip addr show eth0 2>/dev/null | grep -oP 'inet \K[\d.]+' | head -n 1)
     if [[ -z "$WSL_IP" ]] && command -v hostname >/dev/null; then
         WSL_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
