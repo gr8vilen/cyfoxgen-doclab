@@ -38,7 +38,7 @@ cat << 'EOF'
 | | ||| |\ |||  \  | / \|
 | \_/|| | \|||  /_ | \_/|
 \____/\_/  \|\____\\____/
-HACKLAB DOC v6.6
+HACKLAB DOC v6.7
 EOF
 echo -e "${N}"
 separator
@@ -296,7 +296,7 @@ if [[ "$OS" == "wsl" ]]; then
     
     if [[ -n "$WSL_IP" ]]; then
         log_warn "A Windows UAC prompt may appear to update the routing table..."
-        powershell.exe -NoProfile -Command "Start-Process powershell -ArgumentList '-NoProfile -WindowStyle Hidden -Command \"route delete 172.20.0.0 MASK 255.255.0.0 2> \$null; route add 172.20.0.0 MASK 255.255.0.0 $WSL_IP\"' -Verb RunAs -Wait" >/dev/null 2>&1 || true
+        powershell.exe -NoProfile -Command "Start-Process powershell -ArgumentList '-NoProfile -WindowStyle Hidden -Command \"route delete 172.20.0.0 MASK 255.255.0.0 2> \$null; route add 172.20.0.0 MASK 255.255.0.0 $WSL_IP\"' -Verb RunAs -Wait" < /dev/null >/dev/null 2>&1 || true
         log_ok "Windows route updated for 172.20.x.x -> $WSL_IP"
     else
         log_err "Could not determine WSL IP for routing."
