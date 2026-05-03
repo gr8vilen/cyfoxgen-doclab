@@ -147,6 +147,22 @@ if [[ ${#MISSING_PKGS[@]} -eq 0 ]]; then
     log_ok "All Python packages present"
 else
     log_warn "Installing: ${MISSING_PKGS[*]}"
+
+    if ! python3 -m pip --version &>/dev/null; then
+        log_warn "pip not found — installing pip..."
+        case "$PKG_MGR" in
+            pkg)     pkg install -y python-pip ;;
+            apk)     apk add --no-cache py3-pip ;;
+            apt)     sudo apt-get update -qq && apt_install python3-pip ;;
+            dnf|yum) dnf_install python3-pip ;;
+            pacman)  sudo pacman -Sy --noconfirm python-pip ;;
+            brew)    python3 -m ensurepip --upgrade || true ;;
+        esac
+        if ! python3 -m pip --version &>/dev/null; then
+            curl -sS https://bootstrap.pypa.io/get-pip.py | python3
+        fi
+    fi
+
     PIP_FLAGS=""
     if python3 -m pip help install 2>/dev/null | grep -q "break-system-packages"; then
         PIP_FLAGS="--break-system-packages"

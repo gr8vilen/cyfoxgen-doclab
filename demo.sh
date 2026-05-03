@@ -75,6 +75,20 @@ fi
 
 # ── Python packages ────────────────────────────────────────────────────────────
 log_step "Installing Python packages..."
+
+if ! python3 -m pip --version &>/dev/null; then
+    log_warn "pip not found — installing pip..."
+    case "$PKG_MGR" in
+        apt) sudo apt-get update -qq && sudo apt-get install -y -qq python3-pip ;;
+        dnf) sudo dnf install -y -q python3-pip ;;
+        pacman) sudo pacman -Sy --noconfirm python-pip ;;
+        brew) python3 -m ensurepip --upgrade || true ;;
+    esac
+    if ! python3 -m pip --version &>/dev/null; then
+        curl -sS https://bootstrap.pypa.io/get-pip.py | python3
+    fi
+fi
+
 PIP_FLAGS=""
 python3 -m pip help install 2>/dev/null | grep -q "break-system-packages" && PIP_FLAGS="--break-system-packages"
 python3 -m pip install --quiet $PIP_FLAGS flask flask-cors docker requests 2>&1 | tail -2 | sed 's/^/  /'
